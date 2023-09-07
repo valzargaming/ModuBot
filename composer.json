@@ -1,0 +1,35 @@
+{
+    "name": "valzargaming/modubot",
+    "description": "ValZarGaming's Swiss Army Knife for DiscordPHP.",
+    "authors": [
+        {
+            "name": "Valithor Obsidion",
+            "email": "valithor@valzargaming.com"
+        }
+    ],
+    "require": {
+        "php": "^8.0",
+        "team-reflex/discord-php": "dev-master"
+    },
+    "suggest": {
+        "ext-uv": "For a faster, and more performant loop. PHP >=7 only. Preferred.",
+        "ext-libev": "For a faster, and more performant loop.",
+        "ext-event": "For a faster, and more performant loop.",
+        "ext-mbstring": "For accurate calculations of string length when handling non-english characters.",
+        "react/filesystem": "For a better filesystem experience. Linux only.",
+        "clue/redis-react": "For a better file caching experience using Redis.",
+        "wyrihaximus/react-cache-redis": "For a better file caching experience using Redis.",
+        "vzgcoders/twitchphp": "For Twitch.tv chat integration."
+    },
+    "scripts": {
+        "cs": ["./vendor/bin/php-cs-fixer fix"],
+        "unit": ["./vendor/bin/phpunit"]
+    },
+    "minimum-stability": "dev",
+    "prefer-stable": true,
+    "config": {
+        "allow-plugins": {
+            "wyrihaximus/composer-update-bin-autoload-path": true
+        }
+    }
+}

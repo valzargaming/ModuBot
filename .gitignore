@@ -1,0 +1,9 @@
+/vendor
+/json
+token.php
+webhook_key.php
+botlog.txt
+run.bat
+cmd.lnk
+cmd.exe
+composer.lock
