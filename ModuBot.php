@@ -190,186 +190,6 @@ class ModuBot
         
         $this->afterConstruct($options, $server_options);
     }
-    
-    /**
-     * This method generates server functions based on the server settings.
-     * It loops through the server settings and generates server functions for each enabled server.
-     * For each server, it generates the following message-related functions, prefixed with the server name:
-     * - configexists: checks if the server configuration exists.
-     * 
-     * @return void
-     */
-    protected function generateServerFunctions(): void
-    {    
-        /* This function can be used to generate multiple variations of the same function, but it's not currently used
-        foreach ($this->server_settings as $key => $settings) {
-            if (! isset($settings['enabled']) || ! $settings['enabled']) continue;
-            $server = strtolower($key);
-
-            $serverconfigexists = function (?Message $message = null) use ($key): PromiseInterface|bool
-            {
-                if (isset($this->server_settings[$key])) {
-                    if ($message) return $message->react("👍");
-                    return true;
-                }
-                if ($message) return $message->react("👎");
-                return false;
-            };
-            $this->logger->info("Generating {$server}configexists command.");
-            $this->messageHandler->offsetSet($server.'configexists', $serverconfigexists, ['Owner', 'Administrator']);
-        }
-        */
-    }
-
-    /*
-     * The generated functions include `ping`, `help`, `cpu`, `approveme`, and `insult`.
-     * The `ping` function replies with "Pong!" when called.
-     * The `help` function generates a list of available commands based on the user's roles.
-     * The `cpu` function returns the CPU usage of the system.
-     * The `approveme` function verifies a user's identity and assigns them the `infantry` role.
-     * And more! (see the code for more details)
-     */
-    protected function generateGlobalFunctions(): void
-    { // TODO: add infantry and veteran roles to all non-staff command parameters except for `approveme`
-        $this->messageHandler->offsetSet('ping', new MessageHandlerCallback(function (Message $message, array $message_filtered, string $command): PromiseInterface
-        {
-            return $this->reply($message, 'Pong!');
-        }));
-
-        $help = new MessageHandlerCallback(function (Message $message, array $message_filtered, string $command): PromiseInterface
-        {
-            return $this->reply($message, $this->messageHandler->generateHelp($message->member->roles), 'help.txt', true);
-        });
-        $this->messageHandler->offsetSet('help', $help);
-        $this->messageHandler->offsetSet('commands', $help);
-        $this->messageHandler->offsetSet('cpu', new MessageHandlerCallback(function (Message $message, array $message_filtered, string $command): PromiseInterface
-        {
-            if (PHP_OS_FAMILY == "Windows") {
-                $p = shell_exec('powershell -command "gwmi Win32_PerfFormattedData_PerfOS_Processor | select PercentProcessorTime"');
-                $p = preg_replace('/\s+/', ' ', $p); // reduce spaces
-                $p = str_replace('PercentProcessorTime', '', $p);
-                $p = str_replace('--------------------', '', $p);
-                $p = preg_replace('/\s+/', ' ', $p); // reduce spaces
-                $load_array = explode(' ', $p);
-
-                $x=0;
-                $load = '';
-                foreach ($load_array as $line) if (trim($line) && $x == 0) { $load = "CPU Usage: $line%" . PHP_EOL; break; }
-                return $this->reply($message, $load);
-            } else { // Linux
-                $cpu_load = ($cpu_load_array = sys_getloadavg())
-                    ? $cpu_load = array_sum($cpu_load_array) / count($cpu_load_array)
-                    : '-1';
-                return $this->reply($message, "CPU Usage: $cpu_load%");
-            }
-            return $this->reply($message, 'Unrecognized operating system!');
-        }));
-        $this->messageHandler->offsetSet('checkip', new MessageHandlerCallback(function (Message $message, array $message_filtered, string $command): PromiseInterface
-        {
-            return $message->reply(file_get_contents('http://ipecho.net/plain'));
-        }), ['Developer', 'Administrator']);
-        $this->messageHandler->offsetSet('softban', new MessageHandlerCallback(function (Message $message, array $message_filtered, string $command): PromiseInterface
-        {
-            $this->softban($id = $this->sanitizeInput(substr($message_filtered['message_content_lower'], strlen($command))));
-            return $this->reply($message, "`$id` is no longer allowed to get verified.");
-        }), ['Developer', 'Administrator']);
-        $this->messageHandler->offsetSet('unsoftban', new MessageHandlerCallback(function (Message $message, array $message_filtered, string $command): PromiseInterface
-        {
-            $this->softban($id = $this->sanitizeInput(substr($message_filtered['message_content_lower'], strlen($command))), false);
-            return $this->reply($message, "`$id` is allowed to get verified again.");
-        }), ['Developer', 'Administrator']);
-        $log_handler = function (Message $message, string $message_content): PromiseInterface
-        {
-            $tokens = explode(';', $message_content);
-            $keys = [];
-            foreach ($this->server_settings as $key => $settings) {
-                if (! isset($settings['enabled']) || ! $settings['enabled']) continue;
-                $keys[] = $server = strtolower($key);
-                if (! trim($tokens[0]) == $server) continue; // Check if server is valid
-                if (! isset($this->files[$server.'_log_basedir']) || ! file_exists($this->files[$server.'_log_basedir'])) {
-                    $this->logger->warning("`{$server}_log_basedir` is not defined or does not exist");
-                    return $message->react("🔥");
-                }
-                unset($tokens[0]);
-                $results = $this->FileNav($this->files[$server.'_log_basedir'], $tokens);
-                if ($results[0]) return $message->reply(MessageBuilder::new()->addFile($results[1], 'log.txt'));
-                if (count($results[1]) > 7) $results[1] = [array_pop($results[1]), array_pop($results[1]), array_pop($results[1]), array_pop($results[1]), array_pop($results[1]), array_pop($results[1]), array_pop($results[1])];
-                if (! isset($results[2]) || ! $results[2]) return $this->reply($message, 'Available options: ' . PHP_EOL . '`' . implode('`' . PHP_EOL . '`', $results[1]) . '`');
-                return $this->reply($message, "{$results[2]} is not an available option! Available options: " . PHP_EOL . '`' . implode('`' . PHP_EOL . '`', $results[1]) . '`');
-            }
-            return $this->reply($message, 'Please use the format `logs {server}`. Valid servers: `' . implode(', ', $keys) . '`');
-        };
-        $this->messageHandler->offsetSet('logs', new MessageHandlerCallback(function (Message $message, array $message_filtered, string $command) use ($log_handler): PromiseInterface
-        {
-            return $log_handler($message, trim(substr($message_filtered['message_content'], strlen($command))));
-        }), ['Developer', 'Administrator']);
-        $this->messageHandler->offsetSet('stop', new MessageHandlerCallback(function (Message $message, array $message_filtered, string $command)//: PromiseInterface
-        {
-            $promise = $message->react("🛑");
-            $promise->done(function () { $this->stop(); });
-            //return $promise; // Pending PromiseInterfaces v3
-            return null;
-        }), ['Developer', 'Administrator']);
-    }
-
-    /**
-     * Filters the message content and returns an array with the filtered message content, 
-     * the lowercased filtered message content, and a boolean indicating if this bot was called.
-     *
-     * @param mixed $message The message to filter.
-     *
-     * @return array An array with the filtered message content, the lowercased filtered message content, and a boolean indicating if the message was called.
-     */
-    public function filterMessage($message): array
-    {
-        if (! $message->guild || $message->guild->owner_id != $this->owner_id)  return ['message_content' => '', 'message_content_lower' => '', 'called' => false]; // Only process commands from a guild that Taislin owns
-        $message_content = '';
-        $prefix = $this->command_symbol;
-        $called = false;
-        if (str_starts_with($message->content, $call = $prefix . ' ')) { $message_content = trim(substr($message->content, strlen($call))); $called = true; }
-        elseif (str_starts_with($message->content, $call = "<@!{$this->discord->id}>")) { $message_content = trim(substr($message->content, strlen($call))); $called = true; }
-        elseif (str_starts_with($message->content, $call = "<@{$this->discord->id}>")) { $message_content = trim(substr($message->content, strlen($call))); $called = true; }
-        return ['message_content' => $message_content, 'message_content_lower' => strtolower($message_content), 'called' => $called];
-    }
-
-    public function sendMessage($channel, string $content, string $file_name = 'message.txt', $prevent_mentions = false, $announce_shard = true): ?PromiseInterface
-    {
-        // $this->logger->debug("Sending message to {$channel->name} ({$channel->id}): {$message}");
-        if ($announce_shard && $this->sharding && $this->enabled_servers) {
-            if (! $enabled_servers_string = implode(', ', $this->enabled_servers)) $enabled_servers_string = 'None';
-            if ($this->shard) $content .= '**SHARD FOR [' . $enabled_servers_string . ']**' . PHP_EOL;
-            else $content = '**MAIN PROCESS FOR [' . $enabled_servers_string . ']**' . PHP_EOL . $content;
-        }
-        $builder = MessageBuilder::new();
-        if ($prevent_mentions) $builder->setAllowedMentions(['parse'=>[]]);
-        if (strlen($content)<=2000) return $channel->sendMessage($builder->setContent($content));
-        if (strlen($content)<=4096) {
-            $embed = new Embed($this->discord);
-            $embed->setDescription($content);
-            $builder->addEmbed($embed);
-            return $channel->sendMessage($builder);
-        }
-        return $channel->sendMessage($builder->addFileFromContent($file_name, $content));
-    }
-    public function reply(Message $message, string $content, string $file_name = 'message.txt', $prevent_mentions = false, $announce_shard = true): ?PromiseInterface
-    {
-        // $this->logger->debug("Sending message to {$channel->name} ({$channel->id}): {$message}");
-        if ($announce_shard && $this->sharding && $this->enabled_servers) {
-            if (! $enabled_servers_string = implode(', ', $this->enabled_servers)) $enabled_servers_string = 'None';
-            if ($this->shard) $content .= '**SHARD FOR [' . $enabled_servers_string . ']**' . PHP_EOL;
-            else $content = '**MAIN PROCESS FOR [' . $enabled_servers_string . ']**' . PHP_EOL . $content;
-        }
-        $builder = MessageBuilder::new();
-        if ($prevent_mentions) $builder->setAllowedMentions(['parse'=>[]]);
-        if (strlen($content)<=2000) return $message->reply($builder->setContent($content));
-        if (strlen($content)<=4096) {
-            $embed = new Embed($this->discord);
-            $embed->setDescription($content);
-            $builder->addEmbed($embed);
-            return $message->reply($builder);
-        }
-        return $message->reply($builder->addFileFromContent($file_name, $content));
-    }
 
     /**
      * This method is called after the object is constructed.
@@ -385,7 +205,6 @@ class ModuBot
         $this->generateServerFunctions();
         $this->generateGlobalFunctions();
         $this->logger->debug('[COMMAND LIST] ' . $this->messageHandler->generateHelp());
-
         if (isset($this->discord)) {
             $this->discord->once('ready', function () use ($options) {
                 $this->ready = true;
@@ -447,9 +266,7 @@ class ModuBot
             });
 
         }
-
     }
-    
     /**
      * Resolves the given options array by validating and setting default values for each option.
      *
@@ -501,11 +318,264 @@ class ModuBot
                 unset($options['functions'][$key]);
             }
         }
-        
         if (! isset($options['loop']) || ! ($options['loop'] instanceof LoopInterface)) $options['loop'] = Loop::get();
         $options['browser'] = $options['browser'] ?? new Browser($options['loop']);
         $options['filesystem'] = $options['filesystem'] ?? FileSystemFactory::create($options['loop']);
         return $options;
+    }
+
+    /**
+     * This method generates server functions based on the server settings.
+     * It loops through the server settings and generates server functions for each enabled server.
+     * For each server, it generates the following message-related functions, prefixed with the server name:
+     * - configexists: checks if the server configuration exists.
+     * 
+     * @return void
+     */
+    protected function generateServerFunctions(): void
+    {    
+        /* This function can be used to generate multiple variations of the same function, but it's not currently used
+        foreach ($this->server_settings as $key => $settings) {
+            if (! isset($settings['enabled']) || ! $settings['enabled']) continue;
+            $server = strtolower($key);
+
+            $serverconfigexists = function (?Message $message = null) use ($key): PromiseInterface|bool
+            {
+                if (isset($this->server_settings[$key])) {
+                    if ($message) return $message->react("👍");
+                    return true;
+                }
+                if ($message) return $message->react("👎");
+                return false;
+            };
+            $this->logger->info("Generating {$server}configexists command.");
+            $this->messageHandler->offsetSet($server.'configexists', $serverconfigexists, ['Owner', 'Administrator']);
+        }
+        */
+    }
+
+    /**
+     * This class method generates global functions for the ModuBot class.
+     * It adds message handlers for "ping", "help", "commands", "cpu", "checkip", "softban", and "unsoftban" commands.
+     * It also defines a log handler function for retrieving logs for a specified server.
+     * 
+     * Commands can be called by mentioning the bot or by using the command symbol, followed by the command's name, which is equal to the key used to add the command to the message handler.
+     * For example, the "ping" command can be called by mentioning the bot or by using the command symbol, followed by "ping".
+     * The third parameter of the MessageHandlerCallback constructor is an array of roles that are allowed to use the command. If the array is empty, the command is available to everyone.
+     * (TODO): Add a parameter that allows the command to be used by anyone possessing a permission, such as "Administrator", rather than a specific role.
+     * The fourth parameter is a string that alters how the command is called. Default is "exact" which means the command must be called exactly as it is defined.
+     * Alternative values are "str_contains", 'str_ends_with', and 'str_starts_with'.
+     * (NYI) The fifth parameter is a description of the command that is used if the help command is proceeded by the command name.
+     * @return void
+     */
+    protected function generateGlobalFunctions(): void
+    {
+        /**
+         * Adds a message handler for the "ping" command that replies with "Pong!".
+         */
+        $this->messageHandler->offsetSet('ping', new MessageHandlerCallback(function (Message $message, array $message_filtered, string $command): PromiseInterface
+        {
+            return $this->reply($message, 'Pong!');
+        }));
+
+        /**
+         * Adds a new message handler callback for the "help" command and sets it as both the "help" and "commands" offset in the message handler.
+         */
+        $help = new MessageHandlerCallback(function (Message $message, array $message_filtered, string $command): PromiseInterface
+        {
+            return $this->reply($message, $this->messageHandler->generateHelp($message->member->roles), 'help.txt', true);
+        });
+        $this->messageHandler->offsetSet('help', $help);
+        $this->messageHandler->offsetSet('commands', $help);
+        /**
+         * This method retrieves the CPU usage of the operating system where the bot is running.
+         * If the operating system is Windows, it uses PowerShell to get the CPU usage percentage.
+         * If the operating system is Linux, it uses the sys_getloadavg() function to get the CPU usage percentage.
+         */
+        $this->messageHandler->offsetSet('cpu', new MessageHandlerCallback(function (Message $message, array $message_filtered, string $command): PromiseInterface
+        {
+            if (PHP_OS_FAMILY == "Windows") {
+                $p = shell_exec('powershell -command "gwmi Win32_PerfFormattedData_PerfOS_Processor | select PercentProcessorTime"');
+                $p = preg_replace('/\s+/', ' ', $p); // reduce spaces
+                $p = str_replace('PercentProcessorTime', '', $p);
+                $p = str_replace('--------------------', '', $p);
+                $p = preg_replace('/\s+/', ' ', $p); // reduce spaces
+                $load_array = explode(' ', $p);
+
+                $x=0;
+                $load = '';
+                foreach ($load_array as $line) if (trim($line) && $x == 0) { $load = "CPU Usage: $line%" . PHP_EOL; break; }
+                return $this->reply($message, $load);
+            } else { // Linux
+                $cpu_load = ($cpu_load_array = sys_getloadavg())
+                    ? $cpu_load = array_sum($cpu_load_array) / count($cpu_load_array)
+                    : '-1';
+                return $this->reply($message, "CPU Usage: $cpu_load%");
+            }
+            return $this->reply($message, 'Unrecognized operating system!');
+        }));
+        /**
+         * Adds a new command 'checkip' to the message handler that returns the IP address of the server.
+         */
+        $this->messageHandler->offsetSet('checkip', new MessageHandlerCallback(function (Message $message, array $message_filtered, string $command): PromiseInterface
+        {
+            return $message->reply(file_get_contents('http://ipecho.net/plain'));
+        }), ['Developer', 'Administrator']);
+        /**
+         * Adds softban command to the message handler.
+         */
+        $this->messageHandler->offsetSet('softban', new MessageHandlerCallback(function (Message $message, array $message_filtered, string $command): PromiseInterface
+        {
+            $this->softban($id = $this->sanitizeInput(substr($message_filtered['message_content_lower'], strlen($command))));
+            return $this->reply($message, "`$id` is no longer allowed to get verified.");
+        }), ['Developer', 'Administrator']);
+
+        /**
+         * Adds unsoftban command to the message handler.
+         */
+        $this->messageHandler->offsetSet('unsoftban', new MessageHandlerCallback(function (Message $message, array $message_filtered, string $command): PromiseInterface
+        {
+            $this->softban($id = $this->sanitizeInput(substr($message_filtered['message_content_lower'], strlen($command))), false);
+            return $this->reply($message, "`$id` is allowed to get verified again.");
+        }), ['Developer', 'Administrator']);
+        /**
+         * This function handles retrieving logs for the specified server. It takes a Message object and a string message_content as input.
+         * It splits the message_content into tokens and checks if the server is valid. If the server is valid, it checks if the log directory exists.
+         * If the log directory exists, it navigates to the specified file and returns the file as a reply. If the file does not exist, it returns a message with available options.
+         * If the server is not valid, it returns a message with valid server options.
+         */
+        $log_handler = function (Message $message, string $message_content): PromiseInterface
+        {
+            $tokens = explode(';', $message_content);
+            $keys = [];
+            foreach ($this->server_settings as $key => $settings) {
+                if (! isset($settings['enabled']) || ! $settings['enabled']) continue;
+                $keys[] = $server = strtolower($key);
+                if (! trim($tokens[0]) == $server) continue; // Check if server is valid
+                if (! isset($this->files[$server.'_log_basedir']) || ! file_exists($this->files[$server.'_log_basedir'])) {
+                    $this->logger->warning("`{$server}_log_basedir` is not defined or does not exist");
+                    return $message->react("🔥");
+                }
+                unset($tokens[0]);
+                $results = $this->FileNav($this->files[$server.'_log_basedir'], $tokens);
+                if ($results[0]) return $message->reply(MessageBuilder::new()->addFile($results[1], 'log.txt'));
+                if (count($results[1]) > 7) $results[1] = [array_pop($results[1]), array_pop($results[1]), array_pop($results[1]), array_pop($results[1]), array_pop($results[1]), array_pop($results[1]), array_pop($results[1])];
+                if (! isset($results[2]) || ! $results[2]) return $this->reply($message, 'Available options: ' . PHP_EOL . '`' . implode('`' . PHP_EOL . '`', $results[1]) . '`');
+                return $this->reply($message, "{$results[2]} is not an available option! Available options: " . PHP_EOL . '`' . implode('`' . PHP_EOL . '`', $results[1]) . '`');
+            }
+            return $this->reply($message, 'Please use the format `logs {server}`. Valid servers: `' . implode(', ', $keys) . '`');
+        };
+        /**
+         * Sets a new message handler callback for retrieving logs on the filesystem.
+         *
+         * @return PromiseInterface
+         */
+        $this->messageHandler->offsetSet('logs', new MessageHandlerCallback(function (Message $message, array $message_filtered, string $command) use ($log_handler): PromiseInterface
+        {
+            return $log_handler($message, trim(substr($message_filtered['message_content'], strlen($command))));
+        }), ['Developer', 'Administrator']);
+        /**
+         * Adds a message handler for the "stop" command that reacts with a stop sign emoji and stops the bot.
+         * @return null
+         * NOTE: This function is currently not working due to a bug in the DiscordPHP library.
+         */
+        $this->messageHandler->offsetSet('stop', new MessageHandlerCallback(function (Message $message, array $message_filtered, string $command)//: PromiseInterface
+        {
+            $promise = $message->react("🛑");
+            $promise->done(function () { $this->stop(); });
+            //return $promise; // Pending PromiseInterfaces v3
+            return $promise;
+        }), ['Developer', 'Administrator']);
+    }
+
+    /**
+     * Sanitizes the input by removing unwanted characters and converting to lowercase.
+     *
+     * @param string $input The input string to sanitize.
+     * @return string The sanitized input string.
+     */
+    public function sanitizeInput(string $input): string
+    {
+        return trim(str_replace(['<@!', '<@&', '<@', '>', '.', '_', '-', ' '], '', strtolower($input)));
+    }
+    /**
+     * Filters the message content and returns an array with the filtered message content, 
+     * the lowercased filtered message content, and a boolean indicating if this bot was called.
+     *
+     * @param mixed $message The message to filter.
+     *
+     * @return array An array with the filtered message content, the lowercased filtered message content, and a boolean indicating if the message was called.
+     */
+    public function filterMessage($message): array
+    {
+        if (! $message->guild || $message->guild->owner_id != $this->owner_id)  return ['message_content' => '', 'message_content_lower' => '', 'called' => false]; // Only process commands from a guild that Taislin owns
+        $message_content = '';
+        $prefix = $this->command_symbol;
+        $called = false;
+        if (str_starts_with($message->content, $call = $prefix . ' ')) { $message_content = trim(substr($message->content, strlen($call))); $called = true; }
+        elseif (str_starts_with($message->content, $call = "<@!{$this->discord->id}>")) { $message_content = trim(substr($message->content, strlen($call))); $called = true; }
+        elseif (str_starts_with($message->content, $call = "<@{$this->discord->id}>")) { $message_content = trim(substr($message->content, strlen($call))); $called = true; }
+        return ['message_content' => $message_content, 'message_content_lower' => strtolower($message_content), 'called' => $called];
+    }
+
+    /**
+     * Sends a message to a Discord channel.
+     *
+     * @param Channel $channel The channel to send the message to.
+     * @param string $content The content of the message.
+     * @param string $file_name The name of the file to attach to the message. Default is 'message.txt'.
+     * @param bool $prevent_mentions Whether to prevent mentions in the message. Default is false.
+     * @param bool $announce_shard Whether to announce the shard in the message. Default is true.
+     *
+     * @return PromiseInterface|null A promise that resolves to the sent message, or null if the message could not be sent.
+     */
+    public function sendMessage($channel, string $content, string $file_name = 'message.txt', $prevent_mentions = false, $announce_shard = true): ?PromiseInterface
+    {
+        // $this->logger->debug("Sending message to {$channel->name} ({$channel->id}): {$message}");
+        if ($announce_shard && $this->sharding && $this->enabled_servers) {
+            if (! $enabled_servers_string = implode(', ', $this->enabled_servers)) $enabled_servers_string = 'None';
+            if ($this->shard) $content .= '**SHARD FOR [' . $enabled_servers_string . ']**' . PHP_EOL;
+            else $content = '**MAIN PROCESS FOR [' . $enabled_servers_string . ']**' . PHP_EOL . $content;
+        }
+        $builder = MessageBuilder::new();
+        if ($prevent_mentions) $builder->setAllowedMentions(['parse'=>[]]);
+        if (strlen($content)<=2000) return $channel->sendMessage($builder->setContent($content));
+        if (strlen($content)<=4096) {
+            $embed = new Embed($this->discord);
+            $embed->setDescription($content);
+            $builder->addEmbed($embed);
+            return $channel->sendMessage($builder);
+        }
+        return $channel->sendMessage($builder->addFileFromContent($file_name, $content));
+    }
+    /**
+     * Sends a reply message to the channel where the original message was sent.
+     *
+     * @param Message $message The original message to reply to.
+     * @param string $content The content of the reply message.
+     * @param string $file_name The name of the file to attach to the reply message. Default is 'message.txt'.
+     * @param bool $prevent_mentions Whether to prevent mentions in the reply message. Default is false.
+     * @param bool $announce_shard Whether to announce the shard in the reply message. Default is true.
+     * @return PromiseInterface|null A promise that resolves when the reply message is sent, or null if the message could not be sent.
+     */
+    public function reply(Message $message, string $content, string $file_name = 'message.txt', $prevent_mentions = false, $announce_shard = true): ?PromiseInterface
+    {
+        // $this->logger->debug("Sending message to {$channel->name} ({$channel->id}): {$message}");
+        if ($announce_shard && $this->sharding && $this->enabled_servers) {
+            if (! $enabled_servers_string = implode(', ', $this->enabled_servers)) $enabled_servers_string = 'None';
+            if ($this->shard) $content .= '**SHARD FOR [' . $enabled_servers_string . ']**' . PHP_EOL;
+            else $content = '**MAIN PROCESS FOR [' . $enabled_servers_string . ']**' . PHP_EOL . $content;
+        }
+        $builder = MessageBuilder::new();
+        if ($prevent_mentions) $builder->setAllowedMentions(['parse'=>[]]);
+        if (strlen($content)<=2000) return $message->reply($builder->setContent($content));
+        if (strlen($content)<=4096) {
+            $embed = new Embed($this->discord);
+            $embed->setDescription($content);
+            $builder->addEmbed($embed);
+            return $message->reply($builder);
+        }
+        return $message->reply($builder->addFileFromContent($file_name, $content));
     }
     
     /**
@@ -620,13 +690,6 @@ class ModuBot
         else $this->logger->warning("Failed top create new config for guild {$guild->name}");
     }
     
-    /*
-    * This function is used to get either sanitize a ckey or a Discord snowflake
-    */
-    public function sanitizeInput(string $input): string
-    {
-        return trim(str_replace(['<@!', '<@&', '<@', '>', '.', '_', '-', ' '], '', strtolower($input)));
-    }
     /** (NYI)
      * Retrieves a Role object based on the input string.
      *
@@ -687,11 +750,16 @@ class ModuBot
         return false;
     }
 
-    /*
-    * These Legacy and SQL functions should not be called directly
-    * Define $legacy = true/false and use ban/unban methods instead
-    */
-    public function sqlUnban($array, $admin = null, ?string $key = ''): string
+    /**
+     * Placeholder method for SQL unban functionality.
+     *
+     * @param array $array An array of parameters.
+     * @param mixed|null $admin An optional parameter indicating the admin.
+     * @param string|null $key An optional parameter indicating the key.
+     *
+     * @return string A string indicating that SQL methods are not yet implemented.
+     */
+    public function sqlUnban(array $array, ?string $admin = null, ?string $key = ''): string
     {
         return "SQL methods are not yet implemented!" . PHP_EOL;
     }
@@ -714,10 +782,6 @@ class ModuBot
         }
     }
     */
-    public function sqlpersunban(string $ckey, ?string $admin = null): void
-    {
-        // TODO
-    }
     /* TODO: Reimplement this without the external game system
     public function legacyBan(array $array, $admin = null, ?string $key = ''): string
     {
@@ -744,7 +808,15 @@ class ModuBot
         return $result;
     }
     */
-    public function sqlBan(array $array, $admin = null, ?string $key = ''): string
+    /**
+     * Placeholder method for SQL ban functionality.
+     *
+     * @param array $array An array of ban parameters.
+     * @param mixed $admin The admin who issued the ban.
+     * @param string|null $key The key to use for the ban.
+     * @return string A message indicating that SQL methods are not yet implemented.
+     */
+    public function sqlBan(array $array, ?string $admin = null, ?string $key = ''): string
     {
         return "SQL methods are not yet implemented!" . PHP_EOL;
     }
@@ -832,11 +904,14 @@ class ModuBot
     }
     */
     /*
-    * This function is used to get the country code of an IP address using the ip-api API
-    * The site will return a JSON object with the country code, region, and city of the IP address
-    * The site will return a status of 429 if the request limit is exceeded (45 requests per minute)
-    * Returns a string in the format of 'CC->REGION->CITY'
-    */
+     * This function is used to get the country code of an IP address using the ip-api API
+     * The site will return a JSON object with the country code, region, and city of the IP address
+     * The site will return a status of 429 if the request limit is exceeded (45 requests per minute)
+     * Returns a string in the format of 'CC->REGION->CITY'
+     *
+     * @param string $ip The IP address to lookup.
+     * @return string The country code, region and city of the given IP address in the format "countryCode->region->city".
+     */
     function __IP2Country(string $ip): string
     {
         // TODO: Add caching and error handling for 429s
@@ -850,6 +925,12 @@ class ModuBot
         if (! $json) return ''; // If the request timed out or if the service 429'd us
         if ($json['status'] == 'success') return $json['countryCode'] . '->' . $json['region'] . '->' . $json['city'];
     }
+    /**
+     * Returns the country code for a given IP address.
+     *
+     * @param string $ip The IP address to look up.
+     * @return string The two-letter country code for the IP address, or 'unknown' if the country cannot be determined.
+     */
     function IP2Country(string $ip): string
     {
         $numbers = explode('.', $ip);
@@ -892,9 +973,13 @@ class ModuBot
         return null;
     }
 
-    /*
-    * This function is used to change the bot's status on Discord
-    */
+    /**
+     * This function is used to change the bot's status on Discord.
+     *
+     * @param Activity $activity The activity to set for the bot's status.
+     * @param string $state The state to set for the bot's status. Default is 'online'.
+     * @return void
+     */
     public function statusChanger(Activity $activity, $state = 'online'): void
     {
         $this->discord->updatePresence($activity, false, $state);
@@ -945,7 +1030,13 @@ class ModuBot
     }
     */
 
-    // Check that all required roles are properly declared in the bot's config and exist in the guild
+    /**
+     * Checks if the primary guild and the bot's config have all the required roles.
+     *
+     * @param array $required_roles An array of role IDs that are required for the bot to function.
+     *
+     * @return bool Returns true if all the required roles are present in the primary guild, false otherwise.
+     */
     public function hasRequiredConfigRoles(array $required_roles = []): bool
     {
         if (! $guild = $this->discord->guilds->get('id', $this->primary_guild_id)) { $this->logger->error("Primary Guild `{$this->primary_guild_id}` is missing!"); return false; }
@@ -954,7 +1045,14 @@ class ModuBot
         return true;
     }
     
-    // Check that all required files are properly declared in the bot's config and exist in the guild
+    /**
+     * Check that all required files are properly declared in the bot's config and exist on the filesystem.
+     *
+     * @param string $postfix The file postfix to search for
+     * @param bool $defaults Whether to include default files or not
+     * @param array $lists Additional file paths to search for
+     * @return array|false An array of file paths or false if no files were found
+     */
     public function getRequiredConfigFiles(string $postfix = '', bool $defaults = true, array $lists = []): array|false
     {
         $l = [];
@@ -972,6 +1070,14 @@ class ModuBot
         return $l;
     }
 
+    /**
+     * This function updates the contents of files based on the roles of verified members.
+     *
+     * @param callable $callback A function that determines what to write to the file.
+     * @param array $file_paths An array of file paths to update.
+     * @param array $required_roles An array of required roles for the members.
+     * @return void
+     */
     /*
     * This function is used to update the contents of files based on the roles of verified members
     * The callback function is used to determine what to write to the file
