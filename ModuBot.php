@@ -26,15 +26,17 @@ use Monolog\Logger;
 use Monolog\Level;
 use Monolog\Formatter\LineFormatter;
 use Monolog\Handler\StreamHandler;
+use Psr\Http\Message\ServerRequestInterface;
 use React\EventLoop\Loop;
 use React\EventLoop\LoopInterface;
 use React\EventLoop\StreamSelectLoop;
 use React\Http\Browser;
 use React\Http\HttpServer;
+use React\Http\Message\Response as HttpResponse;
 use React\Promise\PromiseInterface;
 use React\Socket\SocketServer;
 //use React\EventLoop\TimerInterface;
-use React\Filesystem\Factory as FilesystemFactory;
+//use React\Filesystem\Factory as FilesystemFactory;
 
 class ModuBot
 {
@@ -43,6 +45,7 @@ class ModuBot
     public string $welcome_message = '';
     
     public MessageHandler $messageHandler;
+    public HttpHandler $httpHandler;
 
     public Slash $slash;
 
@@ -58,6 +61,12 @@ class ModuBot
     
     protected HttpServer $webapi;
     protected SocketServer $socket;
+    protected string $web_address;
+    protected int $http_port;
+
+    protected array $dwa_sessions = [];
+    protected array $dwa_timers = [];
+    protected array $dwa_discord_ids = [];
     
     public collection $verified; // This probably needs a default value for Collection, maybe make it a Repository instead?
     public collection $pending;    
@@ -144,7 +153,7 @@ class ModuBot
         
         $this->loop = $options['loop'];
         $this->browser = $options['browser'];
-        $this->filesystem = $options['filesystem'];
+        //$this->filesystem = $options['filesystem'];
         $this->stats = $options['stats'];
         
         $this->filecache_path = getcwd() . '/json/';
@@ -201,6 +210,7 @@ class ModuBot
      */
     protected function afterConstruct(array $options = [], array $server_options = []): void
     {
+        $this->httpHandler = new HttpHandler($this, [], $options['http_whitelist'] ?? [], $options['http_key'] ?? '');
         $this->messageHandler = new MessageHandler($this);
         $this->generateServerFunctions();
         $this->generateGlobalFunctions();
@@ -210,10 +220,12 @@ class ModuBot
                 $this->ready = true;
                 $this->logger->info("logged in as {$this->discord->user->displayname} ({$this->discord->id})");
                 $this->logger->info('------');
-                if (isset($options['webapi'], $options['socket'])) {
+                if (isset($options['webapi'], $options['socket'], $options['web_address'], $options['http_port'])) {
                     $this->logger->info('setting up HttpServer API');
                     $this->webapi = $options['webapi'];
                     $this->socket = $options['socket'];
+                    $this->web_address = $options['web_address'];
+                    $this->http_port = $options['http_port'];
                     $this->webapi->listen($this->socket);
                 }
                 $this->logger->info('------');
@@ -320,7 +332,7 @@ class ModuBot
         }
         if (! isset($options['loop']) || ! ($options['loop'] instanceof LoopInterface)) $options['loop'] = Loop::get();
         $options['browser'] = $options['browser'] ?? new Browser($options['loop']);
-        $options['filesystem'] = $options['filesystem'] ?? FileSystemFactory::create($options['loop']);
+        //$options['filesystem'] = $options['filesystem'] ?? FileSystemFactory::create($options['loop']);
         return $options;
     }
 
@@ -387,6 +399,12 @@ class ModuBot
         });
         $this->messageHandler->offsetSet('help', $help);
         $this->messageHandler->offsetSet('commands', $help);
+
+        $httphelp = new MessageHandlerCallback(function (Message $message, array $message_filtered, string $command): PromiseInterface
+        {
+            return $this->reply($message, $this->httpHandler->generateHelp(), 'httphelp.txt', true);
+        });
+        $this->messageHandler->offsetSet('httphelp', $httphelp);
         /**
          * This method retrieves the CPU usage of the operating system where the bot is running.
          * If the operating system is Windows, it uses PowerShell to get the CPU usage percentage.
@@ -486,6 +504,342 @@ class ModuBot
             //return $promise; // Pending PromiseInterfaces v3
             return $promise;
         }), ['Developer', 'Administrator']);
+
+        // httpHandler website endpoints
+        $index = new httpHandlerCallback(function (ServerRequestInterface $request, array $data, bool $whitelisted, string $endpoint): HttpResponse
+        {
+            if ($whitelisted) {
+                $method = $this->httpHandler->offsetGet('/botlog') ?? [];
+                if ($method = array_shift($method)) return $method($request, $data, $whitelisted, $endpoint);
+            }
+            return new HttpResponse(HttpResponse::STATUS_FOUND, ['Location' => 'https://www.valzargaming.com/?login']);
+        });
+        $this->httpHandler->offsetSet('/', $index);
+        $this->httpHandler->offsetSet('/index.html', $index);
+        $this->httpHandler->offsetSet('/index.php', $index);
+        
+        $this->httpHandler->offsetSet('/ping', new httpHandlerCallback(function (ServerRequestInterface $request, array $data, bool $whitelisted, string $endpoint): HttpResponse
+        {
+            return HttpResponse::plaintext("Hello wörld!");
+        }));
+        $this->httpHandler->offsetSet('/favicon.ico', new httpHandlerCallback(function (ServerRequestInterface $request, array $data, bool $whitelisted, string $endpoint): HttpResponse
+        {
+            if ($favicon = @file_get_contents('favicon.ico')) return new HttpResponse(HttpResponse::STATUS_OK, ['Content-Type' => 'image/x-icon'], $favicon);
+            return new HttpResponse(HttpResponse::STATUS_NOT_FOUND, ['Content-Type' => 'text/plain'], "Unable to access `favicon.ico`");
+        }));
+
+        // httpHandler whitelisting with DiscordWebAuth
+        if (include('dwa_secrets.php'))
+        if ($dwa_client_id = getenv('dwa_client_id'))
+        if ($dwa_client_secret = getenv('dwa_client_secret'))
+        if (include('DiscordWebAuth.php')) {
+            $this->httpHandler->offsetSet('/dwa', new httpHandlerCallback(function (ServerRequestInterface $request, array $data, bool $whitelisted, string $endpoint) use ($dwa_client_id, $dwa_client_secret): HttpResponse
+            {
+                $ip = $request->getServerParams()['REMOTE_ADDR'];
+                if (! isset($this->dwa_sessions[$ip])) {
+                    $this->dwa_sessions[$ip] = [];
+                    $this->dwa_timers[$ip] = $this->discord->getLoop()->addTimer(30 * 60, function () use ($ip) { // Set a timer to unset the session after 30 minutes
+                        unset($this->dwa_sessions[$ip]);
+                    });
+                }
+
+                $DiscordWebAuth = new \DWA($this, $this->dwa_sessions, $dwa_client_id, $dwa_client_secret, $this->web_address, $this->http_port, $request);
+                if (isset($params['code']) && isset($params['state']))
+                    return $DiscordWebAuth->getToken($params['state']);
+                elseif (isset($params['login']))
+                    return $DiscordWebAuth->login();
+                elseif (isset($params['logout']))
+                    return $DiscordWebAuth->logout();
+                elseif ($DiscordWebAuth->isAuthed() && isset($params['remove']))
+                    return $DiscordWebAuth->removeToken();
+                
+                $tech_ping = '';
+                if (isset($this->technician_id)) $tech_ping = "<@{$this->technician_id}>, ";
+                if (isset($DiscordWebAuth->user) && isset($DiscordWebAuth->user->id)) {
+                    $this->dwa_discord_ids[$ip] = $DiscordWebAuth->user->id;
+                    if (! $this->verified->get('discord', $DiscordWebAuth->user->id)) {
+                        if (isset($this->channel_ids['staff_bot']) && $channel = $this->discord->getChannel($this->channel_ids['staff_bot'])) $this->sendMessage($channel, $tech_ping . "<@&$DiscordWebAuth->user->id> tried to log in with Discord but does not have permission to! Please check the logs.");
+                        return new HttpResponse(HttpResponse::STATUS_UNAUTHORIZED);
+                    }
+                    if ($this->httpHandler->whitelist($ip))
+                        if (isset($this->channel_ids['staff_bot']) && $channel = $this->discord->getChannel($this->channel_ids['staff_bot']))
+                            $this->sendMessage($channel, $tech_ping . "<@{$DiscordWebAuth->user->id}> has logged in with Discord.");
+                    $method = $this->httpHandler->offsetGet('/botlog') ?? [];
+                    if ($method = array_shift($method))
+                        return new HttpResponse(HttpResponse::STATUS_FOUND, ['Location' => "http://{$this->httpHandler->external_ip}:{$this->http_port}/botlog"]);
+                }
+
+                return new HttpResponse(HttpResponse::STATUS_OK);
+            }));
+        }
+
+        // httpHandler log endpoints
+        $botlog_func = new httpHandlerCallback(function (ServerRequestInterface $request, array $data, bool $whitelisted, string $endpoint = '/botlog'): HttpResponse
+        {
+            $webpage_content = function (string $return) use ($endpoint) {
+                return '<meta name="color-scheme" content="light dark"> 
+                        <div class="button-container">
+                            <button style="width:8%" onclick="sendGetRequest(\'pull\')">Pull</button>
+                            <button style="width:8%" onclick="sendGetRequest(\'reset\')">Reset</button>
+                            <button style="width:8%" onclick="sendGetRequest(\'update\')">Update</button>
+                            <button style="width:8%" onclick="sendGetRequest(\'restart\')">Restart</button>
+                            <button style="background-color: black; color:white; display:flex; justify-content:center; align-items:center; height:100%; width:68%; flex-grow: 1;" onclick="window.open(\''. $this->github . '\')">' . $this->discord->user->displayname . '</button>
+                        </div>
+                        <div class="alert-container"></div>
+                        <div class="checkpoint">' . 
+                            str_replace('[' . date("Y"), '</div><div> [' . date("Y"), 
+                                str_replace([PHP_EOL, '[] []', ' [] '], '</div><div>', $return)
+                            ) . 
+                        "</div>
+                        <div class='reload-container'>
+                            <button onclick='location.reload()'>Reload</button>
+                        </div>
+                        <div class='loading-container'>
+                            <div class='loading-bar'></div>
+                        </div>
+                        <script>
+                            var mainScrollArea=document.getElementsByClassName('checkpoint')[0];
+                            var scrollTimeout;
+                            window.onload=function(){
+                                if (window.location.href==localStorage.getItem('lastUrl')){
+                                    mainScrollArea.scrollTop=localStorage.getItem('scrollTop');
+                                } else {
+                                    localStorage.setItem('lastUrl',window.location.href);
+                                    localStorage.setItem('scrollTop',0);
+                                }
+                            };
+                            mainScrollArea.addEventListener('scroll',function(){
+                                clearTimeout(scrollTimeout);
+                                scrollTimeout=setTimeout(function(){
+                                    localStorage.setItem('scrollTop',mainScrollArea.scrollTop);
+                                },100);
+                            });
+                            function sendGetRequest(endpoint) {
+                                var xhr = new XMLHttpRequest();
+                                xhr.open('GET', window.location.protocol + '//' + window.location.hostname + ':{$this->http_port}/' + endpoint, true);
+                                xhr.onload = function () {
+                                    var response = xhr.responseText.replace(/(<([^>]+)>)/gi, '');
+                                    var alertContainer = document.querySelector('.alert-container');
+                                    var alert = document.createElement('div');
+                                    alert.innerHTML = response;
+                                    alertContainer.appendChild(alert);
+                                    setTimeout(function() {
+                                        alert.remove();
+                                    }, 15000);
+                                    if (endpoint === 'restart') {
+                                        var loadingBar = document.querySelector('.loading-bar');
+                                        var loadingContainer = document.querySelector('.loading-container');
+                                        loadingContainer.style.display = 'block';
+                                        var width = 0;
+                                        var interval = setInterval(function() {
+                                            if (width >= 100) {
+                                                clearInterval(interval);
+                                                location.reload();
+                                            } else {
+                                                width += 2;
+                                                loadingBar.style.width = width + '%';
+                                            }
+                                        }, 300);
+                                        loadingBar.style.backgroundColor = 'white';
+                                        loadingBar.style.height = '20px';
+                                        loadingBar.style.position = 'fixed';
+                                        loadingBar.style.top = '50%';
+                                        loadingBar.style.left = '50%';
+                                        loadingBar.style.transform = 'translate(-50%, -50%)';
+                                        loadingBar.style.zIndex = '9999';
+                                        loadingBar.style.borderRadius = '5px';
+                                        loadingBar.style.boxShadow = '0 0 10px rgba(0, 0, 0, 0.5)';
+                                        var backdrop = document.createElement('div');
+                                        backdrop.style.position = 'fixed';
+                                        backdrop.style.top = '0';
+                                        backdrop.style.left = '0';
+                                        backdrop.style.width = '100%';
+                                        backdrop.style.height = '100%';
+                                        backdrop.style.backgroundColor = 'rgba(0, 0, 0, 0.5)';
+                                        backdrop.style.zIndex = '9998';
+                                        document.body.appendChild(backdrop);
+                                        setTimeout(function() {
+                                            clearInterval(interval);
+                                            if (!document.readyState || document.readyState === 'complete') {
+                                                location.reload();
+                                            } else {
+                                                setTimeout(function() {
+                                                    location.reload();
+                                                }, 5000);
+                                            }
+                                        }, 5000);
+                                    }
+                                };
+                                xhr.send();
+                            }
+                            </script>
+                            <style>
+                                .button-container {
+                                    position: fixed;
+                                    top: 0;
+                                    left: 0;
+                                    right: 0;
+                                    background-color: #f1f1f1;
+                                    overflow: hidden;
+                                }
+                                .button-container button {
+                                    float: left;
+                                    display: block;
+                                    color: black;
+                                    text-align: center;
+                                    padding: 14px 16px;
+                                    text-decoration: none;
+                                    font-size: 17px;
+                                    border: none;
+                                    cursor: pointer;
+                                    color: white;
+                                    background-color: black;
+                                }
+                                .button-container button:hover {
+                                    background-color: #ddd;
+                                }
+                                .checkpoint {
+                                    margin-top: 100px;
+                                }
+                                .alert-container {
+                                    position: fixed;
+                                    top: 0;
+                                    right: 0;
+                                    width: 300px;
+                                    height: 100%;
+                                    overflow-y: scroll;
+                                    padding: 20px;
+                                    color: black;
+                                    background-color: black;
+                                }
+                                .alert-container div {
+                                    margin-bottom: 10px;
+                                    padding: 10px;
+                                    background-color: #fff;
+                                    border: 1px solid #ddd;
+                                }
+                                .reload-container {
+                                    position: fixed;
+                                    bottom: 0;
+                                    left: 50%;
+                                    transform: translateX(-50%);
+                                    margin-bottom: 20px;
+                                }
+                                .reload-container button {
+                                    display: block;
+                                    color: black;
+                                    text-align: center;
+                                    padding: 14px 16px;
+                                    text-decoration: none;
+                                    font-size: 17px;
+                                    border: none;
+                                    cursor: pointer;
+                                }
+                                .reload-container button:hover {
+                                    background-color: #ddd;
+                                }
+                                .loading-container {
+                                    position: fixed;
+                                    top: 0;
+                                    left: 0;
+                                    right: 0;
+                                    bottom: 0;
+                                    background-color: rgba(0, 0, 0, 0.5);
+                                    display: none;
+                                }
+                                .loading-bar {
+                                    position: absolute;
+                                    top: 50%;
+                                    left: 50%;
+                                    transform: translate(-50%, -50%);
+                                    width: 0%;
+                                    height: 20px;
+                                    background-color: white;
+                                }
+                                .nav-container {
+                                    position: fixed;
+                                    bottom: 0;
+                                    right: 0;
+                                    margin-bottom: 20px;
+                                }
+                                .nav-container button {
+                                    display: block;
+                                    color: black;
+                                    text-align: center;
+                                    padding: 14px 16px;
+                                    text-decoration: none;
+                                    font-size: 17px;
+                                    border: none;
+                                    cursor: pointer;
+                                    color: white;
+                                    background-color: black;
+                                    margin-right: 10px;
+                                }
+                                .nav-container button:hover {
+                                    background-color: #ddd;
+                                }
+                                .checkbox-container {
+                                    display: inline-block;
+                                    margin-right: 10px;
+                                }
+                                .checkbox-container input[type=checkbox] {
+                                    display: none;
+                                }
+                                .checkbox-container label {
+                                    display: inline-block;
+                                    background-color: #ddd;
+                                    padding: 5px 10px;
+                                    cursor: pointer;
+                                }
+                                .checkbox-container input[type=checkbox]:checked + label {
+                                    background-color: #bbb;
+                                }
+                            </style>
+                            <div class='nav-container'>"
+                                . ($endpoint == '/botlog' ? "<button onclick=\"location.href='/botlog2'\">Botlog 2</button>" : "<button onclick=\"location.href='/botlog'\">Botlog 1</button>")
+                            . "</div>
+                            <div class='reload-container'>
+                                <div class='checkbox-container'>
+                                    <input type='checkbox' id='auto-reload-checkbox' " . (isset($_COOKIE['auto-reload']) && $_COOKIE['auto-reload'] == 'true' ? 'checked' : '') . ">
+                                    <label for='auto-reload-checkbox'>Auto Reload</label>
+                                </div>
+                                <button id='reload-button'>Reload</button>
+                            </div>
+                            <script>
+                                var reloadButton = document.getElementById('reload-button');
+                                var autoReloadCheckbox = document.getElementById('auto-reload-checkbox');
+                                var interval;
+        
+                                reloadButton.addEventListener('click', function () {
+                                    clearInterval(interval);
+                                    location.reload();
+                                });
+        
+                                autoReloadCheckbox.addEventListener('change', function () {
+                                    if (this.checked) {
+                                        interval = setInterval(function() {
+                                            location.reload();
+                                        }, 15000);
+                                        localStorage.setItem('auto-reload', 'true');
+                                    } else {
+                                        clearInterval(interval);
+                                        localStorage.setItem('auto-reload', 'false');
+                                    }
+                                });
+        
+                                if (localStorage.getItem('auto-reload') == 'true') {
+                                    autoReloadCheckbox.checked = true;
+                                    interval = setInterval(function() {
+                                        location.reload();
+                                    }, 15000);
+                                }
+                            </script>";
+            };
+            if ($return = @file_get_contents('botlog.txt')) return HttpResponse::html($webpage_content($return));
+            return HttpResponse::plaintext("Unable to access `botlog.txt`")->withStatus(HttpResponse::STATUS_INTERNAL_SERVER_ERROR);
+        });
+        $this->httpHandler->offsetSet('/botlog', $botlog_func, true);
+        $this->httpHandler->offsetSet('/botlog2', $botlog_func, true);
     }
 
     /**

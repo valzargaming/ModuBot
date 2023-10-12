@@ -7,3 +7,4 @@ run.bat
 cmd.lnk
 cmd.exe
 composer.lock
+dwa_secrets.php
