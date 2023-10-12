@@ -557,10 +557,11 @@ class ModuBot
                 if (isset($this->technician_id)) $tech_ping = "<@{$this->technician_id}>, ";
                 if (isset($DiscordWebAuth->user) && isset($DiscordWebAuth->user->id)) {
                     $this->dwa_discord_ids[$ip] = $DiscordWebAuth->user->id;
-                    if (! $this->verified->get('discord', $DiscordWebAuth->user->id)) {
-                        if (isset($this->channel_ids['staff_bot']) && $channel = $this->discord->getChannel($this->channel_ids['staff_bot'])) $this->sendMessage($channel, $tech_ping . "<@&$DiscordWebAuth->user->id> tried to log in with Discord but does not have permission to! Please check the logs.");
-                        return new HttpResponse(HttpResponse::STATUS_UNAUTHORIZED);
-                    }
+
+                    // Comment out the following line to bypass whitelisting, or add your own whitelisting logic here
+                    if (isset($this->channel_ids['staff_bot']) && $channel = $this->discord->getChannel($this->channel_ids['staff_bot'])) $this->sendMessage($channel, $tech_ping . "<@&$DiscordWebAuth->user->id> tried to log in with Discord but does not have permission to! Please check the logs.");
+                    return new HttpResponse(HttpResponse::STATUS_UNAUTHORIZED); 
+
                     if ($this->httpHandler->whitelist($ip))
                         if (isset($this->channel_ids['staff_bot']) && $channel = $this->discord->getChannel($this->channel_ids['staff_bot']))
                             $this->sendMessage($channel, $tech_ping . "<@{$DiscordWebAuth->user->id}> has logged in with Discord.");
