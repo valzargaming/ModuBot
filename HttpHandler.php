@@ -29,37 +29,48 @@ use React\Http\Message\Response as HttpResponse;
 
 class HttpHandlerCallback implements HttpHandlerCallbackInterface
 {
-    private $callback;
+    private \Closure $callback;
 
+    /**
+     * Constructs a new instance of the HttpHandler class.
+     *
+     * @param callable $callback The callback function to be executed.
+     * @throws \InvalidArgumentException If the callback does not have the expected parameters or type hints.
+     */
     public function __construct(callable $callback)
     {
-        $reflection = new \ReflectionFunction($callback);
-        $parameters = $reflection->getParameters();
-
         $expectedParameterTypes = [ServerRequestInterface::class, 'array', 'bool', 'string'];
-
-        if (count($parameters) !== $count = count($expectedParameterTypes)) {
-            throw new \InvalidArgumentException("The callback must take exactly $count parameters: " . implode(', ', $expectedParameterTypes));
-        }
-
+        
+        $parameters = (new \ReflectionFunction($callback))->getParameters();
+        if (count($parameters) !== $count = count($expectedParameterTypes)) throw new \InvalidArgumentException("The callback must take exactly $count parameters: " . implode(', ', $expectedParameterTypes));
         foreach ($parameters as $index => $parameter) {
-            if (! $parameter->hasType()) {
-                throw new \InvalidArgumentException("Parameter $index must have a type hint.");
-            }
-
-            $type = $parameter->getType()->getName();
-
-            if ($type !== $expectedParameterTypes[$index]) {
-                throw new \InvalidArgumentException("Parameter $index must be of type {$expectedParameterTypes[$index]}.");
-            }
+            if (! $parameter->hasType()) throw new \InvalidArgumentException("Parameter $index must have a type hint.");
+            $type = $parameter->getType();
+            if ($type instanceof \ReflectionNamedType) $type = $type->getName();
+            if ($type !== $expectedParameterTypes[$index]) throw new \InvalidArgumentException("Parameter $index must be of type {$expectedParameterTypes[$index]}.");
         }
 
         $this->callback = $callback;
     }
 
+    /**
+     * Invokes the HTTP handler.
+     *
+     * @param ServerRequestInterface $request The server request.
+     * @param array $data The data array.
+     * @param bool $whitelisted Indicates if the request is whitelisted.
+     * @param string $endpoint The endpoint string.
+     * @return HttpResponse The HTTP response.
+     */
     public function __invoke(ServerRequestInterface $request, array $data = [], bool $whitelisted = false, string $endpoint = ''): HttpResponse
     {
         return call_user_func($this->callback, $request, $data, $whitelisted, $endpoint);
+    }
+
+    public function reject(string $part, string $id): HttpResponse
+    {
+        // $this->modubot->logger->info("[WEBAPI] Failed: $part, $id"); // This should be logged by the handler, not the callback
+        return new HttpResponse(($id ? 404 : 400), ['Content-Type' => 'text/plain'], ($id ? 'Invalid' : 'Missing').' '.$part);
     }
 }
 
@@ -72,6 +83,7 @@ class HttpHandler extends Handler implements HttpHandlerInterface
     public string $external_ip = '127.0.0.1';
     protected string $key = '';
     protected array $whitelist = [];
+    protected array $ratelimits = [];
 
     protected array $endpoints = [];
     
@@ -79,6 +91,7 @@ class HttpHandler extends Handler implements HttpHandlerInterface
     protected array $match_methods = [];
     protected array $descriptions = [];
 
+    public string $last_ip = '';
 
     public function __construct(ModuBot &$modubot, array $handlers = [], array $whitelist = [], string $key = '')
     {
@@ -86,17 +99,28 @@ class HttpHandler extends Handler implements HttpHandlerInterface
         if ($external_ip = file_get_contents('http://ipecho.net/plain')) $this->external_ip = $external_ip;
         foreach ($whitelist as $ip) $this->whitelist($ip);
         $this->key = $key;
+        $this->afterConstruct();
+    }
+
+    public function afterConstruct()
+    {
+        $this->setRateLimit('global10minutes', 10000, 600); // 10,000 requests per 10 minutes
+        $this->setRateLimit('invalid', 10, 300); // 10 invalid requests per 5 minutes
+        $this->setRateLimit('abuse', 100, 86400); // 100 invalid requests per day
     }
 
     public function handle(ServerRequestInterface $request): Response
     {
-        $scheme = $request->getUri()->getScheme();
-        $host = $request->getUri()->getHost();
-        $port = $request->getUri()->getPort();
+        $this->last_ip = $request->getServerParams()['REMOTE_ADDR'];
+        if ($retry_after = $this->isGlobalRateLimited($this->last_ip) ?? $this->isInvalidLimited($this->last_ip)) return $this->__throwError("You are being rate limited. Retry after $retry_after seconds.", Response::STATUS_TOO_MANY_REQUESTS);
+
+        //$scheme = $request->getUri()->getScheme();
+        //$host = $request->getUri()->getHost();
+        //$port = $request->getUri()->getPort();
         $path = $request->getUri()->getPath();
         if ($path === '') $path = '/';
-        $query = $request->getUri()->getQuery();
-        $fragment = $request->getUri()->getFragment(); // Only used on the client side, ignored by the server
+        //$query = $request->getUri()->getQuery();
+        //$fragment = $request->getUri()->getFragment(); // Only used on the client side, ignored by the server
 
         //$url = "$scheme://$host:$port$path". ($query ? "?$query" : '') . ($fragment ? "#$fragment" : '');
         if (str_starts_with($path, '/webhook/')) $this->modubot->logger->debug("[WEBAPI URL] $path");
@@ -115,10 +139,10 @@ class HttpHandler extends Handler implements HttpHandlerInterface
         $data = [];
         if ($params = $request->getQueryParams())
             if (isset($params['data']))
-                $data = json_decode(urldecode($params['data']), true);
+                $data = @json_decode(urldecode($params['data']), true);
         $uri = $request->getUri();
         $path = $uri->getPath(); // We need the .ext too!
-        $ext = pathinfo($uri->getQuery(), PATHINFO_EXTENSION);
+        //$ext = pathinfo($uri->getQuery(), PATHINFO_EXTENSION);
         foreach ($this->handlers as $endpoint => $callback) {
             switch ($this->match_methods[$endpoint]) {
                 case 'exact':
@@ -152,14 +176,24 @@ class HttpHandler extends Handler implements HttpHandlerInterface
             }
             if ($callback = $method_func()) { // Command triggered
                 $whitelisted = false;
-                if (! $whitelisted = $this->__isWhitelisted($request->getServerParams()['REMOTE_ADDR'], $data))
+                if (! $whitelisted = $this->__isWhitelisted($this->last_ip, $data))
                     if (($this->whitelisted[$endpoint] ?? false) !== false)
-                        return $this->__throwError("You do not have permission to access this endpoint.");
-                if (($response = $callback($request, $data, $whitelisted, $endpoint)) instanceof HttpResponse) return $response;
-                else return $this->__throwError("Callback for the endpoint `$path` is disabled due to an invalid response.");
+                        return $this->__throwError("You do not have permission to access this endpoint.", Response::STATUS_FORBIDDEN);
+                if ($this->isRateLimited($endpoint, $this->last_ip)) // This is called before the callback is executed so it will be rate limited even if the callback fails and to save processing time
+                    return $this->__throwError("The resource is being rate limited.", Response::STATUS_TOO_MANY_REQUESTS);
+                if (!($response = $callback($request, $data, $whitelisted, $endpoint)) instanceof HttpResponse)
+                    return $this->__throwError("Callback for the endpoint `$path` is disabled due to an invalid response.", Response::STATUS_INTERNAL_SERVER_ERROR);
+                if (isset($this->ratelimits[$endpoint]['requests']) && $requests = $this->ratelimits[$endpoint]['requests']) {
+                    $lastRequest = end($requests);
+                    if ($lastRequest['status'] !== $status = $response->getStatusCode()) // Status code could be null or otherwise different if the callback changed it
+                        $lastRequest['status'] = $status;
+                    if (in_array($status, [Response::STATUS_UNAUTHORIZED, Response::STATUS_FORBIDDEN, Response::STATUS_NOT_FOUND, Response::STATUS_TOO_MANY_REQUESTS, Response::STATUS_INTERNAL_SERVER_ERROR]))
+                        $this->addRequestToRateLimit('invalid', $this->last_ip, $status);
+                }
+                return $response;
             }
         }
-        return $this->__throwError("An endpoint for `$path` does not exist.");
+        return $this->__throwError("An endpoint for `$path` does not exist.", Response::STATUS_NOT_FOUND);
     }
 
     public function generateHelp(): string
@@ -217,6 +251,98 @@ class HttpHandler extends Handler implements HttpHandlerInterface
         return true;
     }
     
+    /**
+     * Sets the rate limit for a specific endpoint.
+     *
+     * @param string $endpoint The endpoint to set the rate limit for.
+     * @param int $limit The maximum number of requests allowed within the time window.
+     * @param int $window The time window in seconds.
+     * @return HttpHandler Returns the HttpHandler instance.
+     */
+    public function setRateLimit(string $endpoint, int $limit, int $window): HttpHandler
+    {
+        $this->ratelimits[$endpoint] = [
+            'limit' => $limit,
+            'window' => $window,
+            'requests' => [],
+        ];
+        return $this;
+    }
+
+    public function isGlobalRateLimited(string $ip): ?int
+    {
+        $globalEndpoints = ['global10minutes'];
+        $expirations = [];
+        foreach ($globalEndpoints as $endpoint)
+            if ($retry_after = $this->isRateLimited($endpoint, $ip))
+                $expirations[] = $retry_after;
+        return (empty($expirations) ? null : max($expirations));
+    }
+
+    public function isInvalidLimited(string $ip): ?int
+    {
+        $invalidEndpoints = ['invalid', 'abuse'];
+        $expirations = [];
+        foreach ($invalidEndpoints as $endpoint)
+            if ($retry_after = $this->__getRateLimitExpiration($endpoint, $ip))
+                $expirations[] = $retry_after;
+        return (empty($expirations) ? null : max($expirations));
+    }
+
+    /**
+     * Retrieves the expiration time of the rate limit for a specific endpoint and IP address.
+     *
+     * @param string $endpoint The endpoint to check.
+     * @param string $ip The IP address of the request.
+     * @return int|null The number of seconds until the rate limit expires, or null if not rate limited.
+     */
+    public function isRateLimited(string $endpoint, string $ip): ?int
+    {
+        if (isset($this->ratelimits[$endpoint])) $this->addRequestToRateLimit($endpoint, $ip);
+        return $this->__getRateLimitExpiration($endpoint, $ip);
+    }
+    public function __getRateLimitExpiration(string $endpoint, string $ip): ?int
+    {
+        if (! isset($this->ratelimits[$endpoint])) {
+            //$this->modubot->logger->info("`$endpoint` has no rate limit defined.");
+            return null;
+        }
+
+        $rateLimit = $this->ratelimits[$endpoint];
+        $currentTime = time();
+
+        // Remove expired requests from the rate limit tracking
+        $rateLimit['requests'] = array_filter($rateLimit['requests'], function ($request) use ($currentTime, $rateLimit) {
+            return ($currentTime - $request['time']) <= $rateLimit['window'];
+        });
+
+        // Check if the number of requests exceeds the limit for the given IP address
+        $requestsFromIp = array_filter($rateLimit['requests'], function ($request) use ($ip) {
+            return $request['ip'] === $ip;
+        });
+        if (count($requestsFromIp) > $rateLimit['limit']) {
+            $earliestRequest = min(array_column($requestsFromIp, 'time'));
+            $expirationTime = $earliestRequest + $rateLimit['window'];
+            $retry_after = $expirationTime - $currentTime; // Return the number of seconds until the rate limit expires
+            $this->modubot->logger->info("HTTP Server: `$ip` is being rate limited for `$endpoint` for `$retry_after` seconds.");
+            return $retry_after;
+        }
+
+        return null;
+    }
+
+    private function addRequestToRateLimit(string $endpoint, string $ip, ?int $status = null, ?int $currentTime = null): void
+    {
+        if (! $currentTime) $currentTime = time();
+        $rateLimit = $this->ratelimits[$endpoint] ?? [];
+        $rateLimit['requests'][] = [
+            'ip' => $ip,
+            'time' => $currentTime,
+            'status' => $status,
+        ];
+        $this->ratelimits[$endpoint] = $rateLimit;
+    }
+
     public function offsetSet(int|string $offset, callable $callback, ?bool $whitelisted = false,  ?string $method = 'exact', ?string $description = ''): HttpHandler
     {
         parent::offsetSet($offset, $callback);
@@ -280,11 +406,16 @@ class HttpHandler extends Handler implements HttpHandlerInterface
         return filter_var($ip, FILTER_VALIDATE_IP) !== false;
     }
 
-    public function __throwError(string $error): Response
+    public function __throwError(string $error, int $status = Response::STATUS_INTERNAL_SERVER_ERROR): Response
     {
-        $this->modubot->logger->info("HTTP Server error: `$error`");
+        if ($status === Response::STATUS_INTERNAL_SERVER_ERROR) $this->modubot->logger->info("HTTP error for IP: `$this->last_ip`: `$error`");
+        if (in_array($status, [Response::STATUS_UNAUTHORIZED, Response::STATUS_FORBIDDEN, Response::STATUS_NOT_FOUND, Response::STATUS_TOO_MANY_REQUESTS, Response::STATUS_INTERNAL_SERVER_ERROR])) {
+            $time = time();
+            $this->addRequestToRateLimit('invalid', $this->last_ip, $status, $time);
+            $this->addRequestToRateLimit('abuse', $this->last_ip, $status, $time);
+        }
         return Response::json(
             ['error' => $error]
-        )->withStatus(Response::STATUS_INTERNAL_SERVER_ERROR);
+        )->withStatus($status);
     }
 }
