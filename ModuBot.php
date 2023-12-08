@@ -520,7 +520,7 @@ class ModuBot
         
         $this->httpHandler->offsetSet('/ping', new httpHandlerCallback(function (ServerRequestInterface $request, array $data, bool $whitelisted, string $endpoint): HttpResponse
         {
-            return HttpResponse::plaintext("Hello wörld!");
+            return HttpResponse::plaintext('Hello wörld!');
         }));
         $this->httpHandler->offsetSet('/favicon.ico', new httpHandlerCallback(function (ServerRequestInterface $request, array $data, bool $whitelisted, string $endpoint): HttpResponse
         {
@@ -837,7 +837,7 @@ class ModuBot
                             </script>";
             };
             if ($return = @file_get_contents('botlog.txt')) return HttpResponse::html($webpage_content($return));
-            return HttpResponse::plaintext("Unable to access `botlog.txt`")->withStatus(HttpResponse::STATUS_INTERNAL_SERVER_ERROR);
+            return HttpResponse::plaintext('Unable to access `botlog.txt`')->withStatus(HttpResponse::STATUS_INTERNAL_SERVER_ERROR);
         });
         $this->httpHandler->offsetSet('/botlog', $botlog_func, true);
         $this->httpHandler->offsetSet('/botlog2', $botlog_func, true);
@@ -1054,10 +1054,7 @@ class ModuBot
     public function getRole(string $input): ?Role
     {
         if (! $guild = $this->discord->guilds->get('id', $this->primary_guild_id)) return null;
-        if (! $input) {
-            $this->logger->warning("An invalid string was passed to getRole()");
-            return null;
-        }
+        if (! $input) return null;
         if (is_numeric($id = $this->sanitizeInput($input)))
             if ($role = $guild->roles->get('id', $id))
                 return $role;
