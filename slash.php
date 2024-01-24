@@ -82,7 +82,8 @@ class Slash
                 'default_member_permissions' => (string) new RolePermission($this->modubot->discord, ['manage_guild' => true]),
         ]));
 
-        $this->modubot->discord->guilds->get('id', $this->modubot->primary_guild_id)->commands->freshen()->done(function (?GuildCommandRepository $commands) {
+        reset($this->modubot->guilds);
+        $this->modubot->discord->guilds->get('id', key($this->modubot->guilds))->commands->freshen()->done(function (?GuildCommandRepository $commands) {
             //
         });
 
@@ -97,7 +98,7 @@ class Slash
 
         $this->modubot->discord->listenCommand('help', function (Interaction $interaction): PromiseInterface
         {
-            return $interaction->respondWithMessage(MessageBuilder::new()->setContent($this->modubot->messageHandler->generateHelp($interaction->member->roles)), true);
+            return $interaction->respondWithMessage(MessageBuilder::new()->setContent($this->modubot->messageHandler->generateHelp($interaction->member)), true);
         });
 
         $this->modubot->discord->listenCommand('pull', function (Interaction $interaction): void

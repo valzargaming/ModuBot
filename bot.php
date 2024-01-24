@@ -6,6 +6,36 @@
  * Copyright (c) 2023-present Valithor Obsidion <valithor@valzargaming.com>
  */
 
+/**
+ * This code snippet checks if the file 'config.json' exists.
+ * If it does, it reads the contents of the file and assigns it to the variable $guilds_json.
+ * If the file does not exist, it creates the file 'config.json' and writes the default JSON data to it.
+ * The default JSON data represents guild settings for this bot including enabled features, roles, and channels.
+ * It is necessary to have this file in order for the bot to be able to change settings on a per-guild basis.
+ */
+$guilds_json = '
+{
+    "798026051304554556": {
+        "enabled": true,
+        "legacy": true,
+        "moderate": false,
+        "roles": {
+            "Developer": "798026051304554565",
+            "Administrator": "798026051304554564",
+            "Moderator": "798026051304554563",
+            "Contributor": "798026051304554561",
+            "Verified": "798026051304554560",
+            "18+": "798026051304554559"
+        },
+        "channels": {
+            "welcome": "798026051544023052",
+            "staff_bot": "798026051723722808",
+            "webhooks": "1149399138581106809"
+        }
+    }
+}';
+file_exists('config.json') ? $guilds_json = file_get_contents('config.json') : file_put_contents('config.json', $guilds_json);
+
 use \ModuBot\ModuBot;
 use \Discord\Discord;
 //use \Discord\Helpers\CacheConfig;
@@ -35,7 +65,7 @@ $web_address = '127.0.0.1';
 $http_port = 55555;
 
 $loop = Loop::get();
-$streamHandler = new StreamHandler('php://stdout', Level::Info);
+$streamHandler = new StreamHandler('php://stdout', Level::Debug);
 $streamHandler->setFormatter(new LineFormatter(null, null, true, true));
 $logger = new Logger('ModuBot', [$streamHandler]);
 $discord = new Discord([
@@ -101,16 +131,6 @@ $options = array(
     'command_symbol' => '@ModuBot',
     'owner_id' => '116927250145869826', // Valithor
     'technician_id' => '116927250145869826', // Valithor
-    'server_settings' => [ // Server specific settings
-        '923969098185068594' => [
-            'enabled' => true,
-            'name' => 'Valithor\'s server',
-            'Host' => 'Valithor',
-            'legacy' => true,
-            'moderate' => false,
-        ],
-    ],
-    'primary_guild_id' => '798026051304554556', // The guild where this bot is supported
     'legacy' => true,
     'moderate' => true,
     'badwords' => [
@@ -134,19 +154,6 @@ $options = array(
         'insults_path' => 'insults.txt',
         'status_path' => 'status.txt',
     ),
-    'channel_ids' => array(
-        'welcome' => '798026051544023052', // #welcome
-        'staff_bot' => '798026051723722808', // #staff-bot
-        'webhooks' => '1149399138581106809', // #webhooks
-    ),
-    'role_ids' => array(
-        'Developer' => '798026051304554565',
-        'Administrator' => '798026051304554564',
-        'Moderator' => '798026051304554563',
-        'Contributor' => '798026051304554561',
-        'Verified' => '798026051304554560',
-        '18+' => '798026051304554559',
-    ),
     'functions' => array(
         'ready' => [
             'status_changer_timer' => $status_changer_timer,
@@ -163,12 +170,16 @@ $options = array(
         ],
     ),
 );
+$options['guilds'] = json_decode($guilds_json, true); // Load guild settings from JSON file
 //$options['welcome_message'] = "Welcome to the ModuBot Discord Server! Please read the rules and verify your account using the `approveme` command. Failure to verify in a timely manner will result in an automatic removal from the server.";
 
 $modubot = new ModuBot($options);
 $global_error_handler = function (int $errno, string $errstr, ?string $errfile, ?int $errline) use ($modubot) {
+    $guild = reset($modubot->guilds);
     if (
-        ($channel = $modubot->discord->getChannel($modubot->channel_ids['staff_bot']))
+        $guild
+        && isset($guild['channels'], $guild['channels']['staff_bot'])
+        && ($channel = $modubot->discord->getChannel($guild['channels']['staff_bot']))
         && ! str_ends_with($errstr, 'Connection timed out')
         && ! str_ends_with($errstr, 'No route to host')
     )
@@ -221,7 +232,8 @@ $webapi->on('error', function (Exception $e, ?\Psr\Http\Message\RequestInterface
     if ($request) $modubot->logger->error('[WEBAPI] Request: ' .  preg_replace('/(?<=key=)[^&]+/', '********', $request->getRequestTarget()));
     if (str_starts_with($e->getMessage(), 'The response callback')) {
         $modubot->logger->info('[WEBAPI] ERROR - RESTART');
-        if (isset($modubot->channel_ids['staff_bot']) && $channel = $modubot->discord->getChannel($modubot->channel_ids['staff_bot'])) {
+        $guild = reset($modubot->guilds);
+        if (isset($guild['channel_ids']['staff_bot']) && $channel = $modubot->discord->getChannel($guild['channel_ids']['staff_bot'])) {
             $builder = \Discord\Builders\MessageBuilder::new()
                 ->setContent('Restarting due to error in HttpServer API...' . PHP_EOL . "Last path: `$last_path`")
                 ->addFileFromContent("httpserver_error.txt",preg_replace('/(?<=key=)[^&]+/', '********', $error));

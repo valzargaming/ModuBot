@@ -121,19 +121,16 @@ class ModuBot
     public string $owner_id = '116927250145869826'; // Valithor's Discord ID
     public string $technician_id = '116927250145869826'; // Valithor's Discord ID
     public string $embed_footer = ''; // Footer for embeds, this is set in the ready event
-    public string $primary_guild_id = '468979034571931648'; // Guild ID for the ModuBot server
 
     public string $github = 'https://github.com/valzargaming/modubot'; // Link to the bot's github page
+    public string $auth_url = 'https://www.valzargaming.com/?login'; // Link to the bot's authentication page
     public string $banappeal = ''; // Users can appeal their bans here
     public string $rules = ''; // Link to the server rules
     public bool $webserver_online = false;
     
     public array $folders = [];
     public array $files = [];
-    public array $ips = [];
-    public array $ports = [];
-    public array $channel_ids = [];
-    public array $role_ids = [];
+    public array $guilds = [];
     
     public array $discord_config = []; // This variable and its related function currently serve no purpose, but I'm keeping it in case I need it later
 
@@ -169,7 +166,6 @@ class ModuBot
         if (isset($options['banappeal'])) $this->banappeal = $options['banappeal'];
         if (isset($options['rules'])) $this->rules = $options['rules'];
         if (isset($options['github'])) $this->github = $options['github'];
-        if (isset($options['primary_guild_id'])) $this->primary_guild_id = $options['primary_guild_id'];
         if (isset($options['legacy']) && is_bool($options['legacy'])) $this->legacy = $options['legacy'];
         if (isset($options['moderate']) && is_bool($options['moderate'])) $this->moderate = $options['moderate'];
         if (isset($options['badwords']) && is_array($options['badwords'])) $this->badwords = $options['badwords'];
@@ -183,15 +179,10 @@ class ModuBot
         if (isset($options['functions'])) foreach (array_keys($options['functions']) as $key1) foreach ($options['functions'][$key1] as $key2 => $func) $this->functions[$key1][$key2] = $func;
         else $this->logger->warning('No functions passed in options!');
         
-        if (isset($options['files'])) foreach ($options['files'] as $key => $path) $this->files[$key] = $path;
+        if (isset($options['files'])) $this->files = $options['files'] ?? [];
         else $this->logger->warning('No files passed in options!');
-        if (isset($options['channel_ids'])) foreach ($options['channel_ids'] as $key => $id) $this->channel_ids[$key] = $id;
-        else $this->logger->warning('No channel_ids passed in options!');
-        if (isset($options['role_ids'])) foreach ($options['role_ids'] as $key => $id) $this->role_ids[$key] = $id;
-        else $this->logger->warning('No role_ids passed in options!');
-
-        if (isset($options['server_settings']) && is_array($options['server_settings'])) $this->server_settings = $options['server_settings'];
-        else $this->logger->warning('No server_settings passed in options!');
+        if (isset($options['guilds'])) $this->guilds = $options['guilds'] ?? [];
+        else $this->logger->warning('No guilds passed in options!');
 
         $this->enabled_servers = array_keys(array_filter($this->server_settings, function($settings) {
             return isset($settings['enabled']) && $settings['enabled'];
@@ -214,7 +205,7 @@ class ModuBot
         $this->messageHandler = new MessageHandler($this);
         $this->generateServerFunctions();
         $this->generateGlobalFunctions();
-        $this->logger->debug('[COMMAND LIST] ' . $this->messageHandler->generateHelp());
+        $this->logger->debug('[COMMAND LIST] ' . $this->messageHandler->generateHelp(null, true));
         if (isset($this->discord)) {
             $this->discord->once('ready', function () use ($options) {
                 $this->ready = true;
@@ -311,13 +302,32 @@ class ModuBot
             $this->logger->warning("`$value` is not a valid file path!");
             unset($options['files'][$key]);
         }
-        if (isset($options['channel_ids'])) foreach ($options['channel_ids'] as $key => $value) if (! is_numeric($value)) {
-            $this->logger->warning("`$value` is not a valid channel id!");
-            unset($options['channel_ids'][$key]);
-        }
-        if (isset($options['role_ids'])) foreach ($options['role_ids'] as $key => $value) if (! is_numeric($value)) {
-            $this->logger->warning("`$value` is not a valid role id!");
-            unset($options['role_ids'][$key]);
+        if (isset($options['guilds'])) foreach ($options['guilds'] as $key => $value) {
+            if (! is_numeric($key) || ! is_array($value)) {
+                $this->logger->warning("Guild `$key` does not have a valid configuration!");
+                unset($options['guilds'][$key]);
+                continue;
+            }
+            if (! isset($value['roles']) || ! is_array($value['roles'])) {
+                $this->logger->warning("Guild `$key` does not have a valid roles array!");
+                unset($options['guilds'][$key]);
+            } else foreach ($value['roles'] as $role_name => $role_id) {
+                if (! is_numeric($role_id)) {
+                    $this->logger->warning("Guild `$key` has a non-numeric role: `$role_name`!");
+                    unset($options['guilds'][$key]);
+                    break;
+                }
+            }
+            if (! isset($value['channels']) || ! is_array($value['channels'])) {
+                $this->logger->warning("Guild `$key` does not have a valid channels array!");
+                unset($options['guilds'][$key]);
+            } else foreach ($value['channels'] as $channel_name => $channel_id) {
+                if (! is_numeric($channel_id)) {
+                    $this->logger->warning("Guild `$key` has a non-numeric channel: `$channel_name`!");
+                    unset($options['guilds'][$key]);
+                    break;
+                }
+            }
         }
         if (isset($options['functions'])) foreach ($options['functions'] as $key => $array) {
             if (! is_array($array)) {
@@ -395,7 +405,7 @@ class ModuBot
          */
         $help = new MessageHandlerCallback(function (Message $message, array $message_filtered, string $command): PromiseInterface
         {
-            return $this->reply($message, $this->messageHandler->generateHelp($message->member->roles), 'help.txt', true);
+            return $this->reply($message, $this->messageHandler->generateHelp($message->member), 'help.txt', true);
         });
         $this->messageHandler->offsetSet('help', $help);
         $this->messageHandler->offsetSet('commands', $help);
@@ -512,7 +522,7 @@ class ModuBot
                 $method = $this->httpHandler->offsetGet('/botlog') ?? [];
                 if ($method = array_shift($method)) return $method($request, $data, $whitelisted, $endpoint);
             }
-            return new HttpResponse(HttpResponse::STATUS_FOUND, ['Location' => 'https://www.valzargaming.com/?login']);
+            return new HttpResponse(HttpResponse::STATUS_FOUND, ['Location' => $this->auth_url]);
         });
         $this->httpHandler->offsetSet('/', $index);
         $this->httpHandler->offsetSet('/index.html', $index);
@@ -544,7 +554,7 @@ class ModuBot
                 }
 
                 $DiscordWebAuth = new \DWA($this, $this->dwa_sessions, $dwa_client_id, $dwa_client_secret, $this->web_address, $this->http_port, $request);
-                if (isset($params['code']) && isset($params['state']))
+                if (isset($params['code'], $params['state']))
                     return $DiscordWebAuth->getToken($params['state']);
                 elseif (isset($params['login']))
                     return $DiscordWebAuth->login();
@@ -555,15 +565,15 @@ class ModuBot
                 
                 $tech_ping = '';
                 if (isset($this->technician_id)) $tech_ping = "<@{$this->technician_id}>, ";
-                if (isset($DiscordWebAuth->user) && isset($DiscordWebAuth->user->id)) {
+                if (isset($DiscordWebAuth->user, $DiscordWebAuth->user->id)) {
                     $this->dwa_discord_ids[$ip] = $DiscordWebAuth->user->id;
 
                     // Comment out the following line to bypass whitelisting, or add your own whitelisting logic here
-                    if (isset($this->channel_ids['staff_bot']) && $channel = $this->discord->getChannel($this->channel_ids['staff_bot'])) $this->sendMessage($channel, $tech_ping . "<@&$DiscordWebAuth->user->id> tried to log in with Discord but does not have permission to! Please check the logs.");
+                    if (isset(reset($this->guilds)['channel_ids']['staff_bot']) && $channel = $this->discord->getChannel(reset($this->guilds)['channel_ids']['staff_bot'])) $this->sendMessage($channel, $tech_ping . "<@&$DiscordWebAuth->user->id> tried to log in with Discord but does not have permission to! Please check the logs.");
                     return new HttpResponse(HttpResponse::STATUS_UNAUTHORIZED); 
 
                     if ($this->httpHandler->whitelist($ip))
-                        if (isset($this->channel_ids['staff_bot']) && $channel = $this->discord->getChannel($this->channel_ids['staff_bot']))
+                        if (isset(reset($this->guilds)['channel_ids']['staff_bot']) && $channel = $this->discord->getChannel(reset($this->guilds)['channel_ids']['staff_bot']))
                             $this->sendMessage($channel, $tech_ping . "<@{$DiscordWebAuth->user->id}> has logged in with Discord.");
                     $method = $this->httpHandler->offsetGet('/botlog') ?? [];
                     if ($method = array_shift($method))
@@ -841,6 +851,52 @@ class ModuBot
         });
         $this->httpHandler->offsetSet('/botlog', $botlog_func, true);
         $this->httpHandler->offsetSet('/botlog2', $botlog_func, true);
+        
+        /*$this->messageHandler->offsetSet('role', new MessageHandlerCallback(function (Message $message, array $message_filtered, string $command) use ($log_handler): PromiseInterface
+        {
+            // Initialize default variables
+            //$default_permissions = new \Discord\Parts\Permissions\RolePermission();
+            $role_template = new Role($this->discord,
+                [
+                    'name' => 'name',
+                    'color' => 0,
+                    'hoist' => false,
+                    'mentionable' => false,
+                    'permissions' => 0
+                ]
+            );
+            $message->guild->createRole($role_template->getUpdatableAttributes())->done(
+                function ($role) use ($message) { //$key, $arr, $val
+                    //
+                },
+                function ($error) {
+                    $this->logger->warning("Error creating role! {$error->getMessage()}");
+                }
+            );
+            
+            // Determine what function to call and early break if the function is not found
+            $method = '';
+            $func = null;
+            switch ($message_filtered['message_content_lower']) {
+                case 'create':
+                    $func = function (Message $message, array $message_filtered, string $command): PromiseInterface
+                    {
+                        return $this->reply($message, 'Placeholder text for adding a role.');
+                    };
+                    break;
+                case 'delete':
+                    $func = function (Message $message, array $message_filtered, string $command): PromiseInterface
+                    {
+                        return $this->reply($message, 'Placeholder text for deleting a role.');
+                    };
+                    break;
+                default:
+                    return $this->reply($message, 'Please use the format `role {create|delete}`.');
+            }
+
+            return $func($message, $message_filtered, $command);
+
+        }), ['Developer', 'Administrator']);*/
     }
 
     /**
@@ -889,7 +945,7 @@ class ModuBot
         // $this->logger->debug("Sending message to {$channel->name} ({$channel->id}): {$message}");
         if ($announce_shard && $this->sharding && $this->enabled_servers) {
             if (! $enabled_servers_string = implode(', ', $this->enabled_servers)) $enabled_servers_string = 'None';
-            if ($this->shard) $content .= '**SHARD FOR [' . $enabled_servers_string . ']**' . PHP_EOL;
+            if ($this->shard) $content = '**SHARD FOR [' . $enabled_servers_string . ']**' . PHP_EOL . $content;
             else $content = '**MAIN PROCESS FOR [' . $enabled_servers_string . ']**' . PHP_EOL . $content;
         }
         $builder = MessageBuilder::new();
@@ -918,7 +974,7 @@ class ModuBot
         // $this->logger->debug("Sending message to {$channel->name} ({$channel->id}): {$message}");
         if ($announce_shard && $this->sharding && $this->enabled_servers) {
             if (! $enabled_servers_string = implode(', ', $this->enabled_servers)) $enabled_servers_string = 'None';
-            if ($this->shard) $content .= '**SHARD FOR [' . $enabled_servers_string . ']**' . PHP_EOL;
+            if ($this->shard) $content = '**SHARD FOR [' . $enabled_servers_string . ']**' . PHP_EOL . $content;
             else $content = '**MAIN PROCESS FOR [' . $enabled_servers_string . ']**' . PHP_EOL . $content;
         }
         $builder = MessageBuilder::new();
@@ -1053,7 +1109,8 @@ class ModuBot
      */
     public function getRole(string $input): ?Role
     {
-        if (! $guild = $this->discord->guilds->get('id', $this->primary_guild_id)) return null;
+        reset($this->guilds);
+        if (! $guild = $this->discord->guilds->get('id', key($this->guilds))) return null;
         if (! $input) return null;
         if (is_numeric($id = $this->sanitizeInput($input)))
             if ($role = $guild->roles->get('id', $id))
@@ -1061,116 +1118,6 @@ class ModuBot
         if ($role = $guild->roles->get('name', $input)) return $role;
         $this->logger->warning("Could not find role with id or name `$input`");
         return null;
-    }
-
-    /* TODO: Reimplement this without the external game system
-    public function bancheck(string $ckey, bool $bypass = false): bool
-    {
-        if (! $ckey = $this->sanitizeInput($ckey)) return false;
-        $banned = ($this->legacy ? $this->legacyBancheck($ckey) : $this->sqlBancheck($ckey));
-        if (! $this->shard)
-            if (! $bypass && $member = $this->getVerifiedMember($ckey))
-                if ($banned && ! $member->roles->has($this->role_ids['banished'])) $member->addRole($this->role_ids['banished'], "bancheck ($ckey)");
-                elseif (! $banned && $member->roles->has($this->role_ids['banished'])) $member->removeRole($this->role_ids['banished'], "bancheck ($ckey)");
-        return $banned;
-    }
-    */
-    public function legacyBancheck(string $ckey): bool
-    {
-        /* TODO: Reimplement this without the external game system
-        foreach ($this->server_settings as $key => $settings) {
-            if (! isset($settings['enabled']) || ! $settings['enabled']) continue;
-            $server = strtolower($key);
-            if (file_exists($this->files[$server.'_bans']) && $file = @fopen($this->files[$server.'_bans'], 'r')) {
-                while (($fp = fgets($file, 4096)) !== false) {
-                    // str_replace(PHP_EOL, '', $fp); // Is this necessary?
-                    $linesplit = explode(';', trim(str_replace('|||', '', $fp))); // $split_ckey[0] is the ckey
-                    if ((count($linesplit)>=8) && ($linesplit[8] == $ckey)) {
-                        fclose($file);
-                        return true;
-                    }
-                }
-                fclose($file);
-            } else $this->logger->debug("unable to open `{$this->files[$server.'_bans']}`");
-        }
-        */
-        return false;
-    }
-    public function sqlBancheck(string $ckey): bool
-    {
-        // TODO
-        return false;
-    }
-
-    /**
-     * Placeholder method for SQL unban functionality.
-     *
-     * @param array $array An array of parameters.
-     * @param mixed|null $admin An optional parameter indicating the admin.
-     * @param string|null $key An optional parameter indicating the key.
-     *
-     * @return string A string indicating that SQL methods are not yet implemented.
-     */
-    public function sqlUnban(array $array, ?string $admin = null, ?string $key = ''): string
-    {
-        return "SQL methods are not yet implemented!" . PHP_EOL;
-    }
-    /* TODO: Reimplement this without the external game system
-    public function legacyUnban(string $ckey, ?string $admin = null, ?string $key = ''): void
-    {
-        $admin = $admin ?? $this->discord->user->username;
-        $legacyUnban = function (string $ckey, string $admin, string $key)
-        {
-            $server = strtolower($key);
-            if (file_exists($this->files[$server.'_discord2unban']) && $file = @fopen($this->files[$server.'_discord2unban'], 'a')) {
-                fwrite($file, $admin . ":::$ckey");
-                fclose($file);
-            } else $this->logger->warning("unable to open {$this->files[$server.'_discord2unban']}");
-        };
-        if ($key) $legacyUnban($ckey, $admin, $key);
-        else foreach ($this->server_settings as $key => $settings) {
-            if (! isset($settings['enabled']) || ! $settings['enabled']) continue;
-            $legacyUnban($ckey, $admin, $key);
-        }
-    }
-    */
-    /* TODO: Reimplement this without the external game system
-    public function legacyBan(array $array, $admin = null, ?string $key = ''): string
-    {
-        $admin = $admin ?? $this->discord->user->username;
-        $legacyBan = function (array $array, string $admin, string $key): string
-        {
-            $server = strtolower($key);
-            if (str_starts_with(strtolower($array['duration']), 'perm')) $array['duration'] = '999 years';
-            if (file_exists($this->files[$server.'_discord2ban']) && $file = @fopen($this->files[$server.'_discord2ban'], 'a')) {
-                fwrite($file, "$admin:::{$array['ckey']}:::{$array['duration']}:::{$array['reason']}" . PHP_EOL);
-                fclose($file);
-                return "**$admin** banned **{$array['ckey']}** from **{$key}** for **{$array['duration']}** with the reason **{$array['reason']}**" . PHP_EOL;
-            } else {
-                $this->logger->warning("unable to open {$this->files[$server.'_discord2ban']}");
-                return "unable to open `{$this->files[$server.'_discord2ban']}`" . PHP_EOL;
-            }
-        };
-        if ($key) return $legacyBan($array, $admin, $key);
-        $result = '';
-        foreach ($this->server_settings as $key => $settings) {
-            if (! isset($settings['enabled']) || ! $settings['enabled']) continue;
-            $result .= $legacyBan($array, $admin, $key);
-        }
-        return $result;
-    }
-    */
-    /**
-     * Placeholder method for SQL ban functionality.
-     *
-     * @param array $array An array of ban parameters.
-     * @param mixed $admin The admin who issued the ban.
-     * @param string|null $key The key to use for the ban.
-     * @return string A message indicating that SQL methods are not yet implemented.
-     */
-    public function sqlBan(array $array, ?string $admin = null, ?string $key = ''): string
-    {
-        return "SQL methods are not yet implemented!" . PHP_EOL;
     }
 
     /**
@@ -1188,73 +1135,6 @@ class ModuBot
         return $this->softbanned;
     }
 
-    /*
-    * These functions determine which of the above methods should be used to process a ban or unban
-    * Ban functions will return a string containing the results of the ban
-    * Unban functions will return nothing, but may contain error-handling messages that can be passed to $logger->warning()
-    */
-    /* TODO: Reimplement this without the external game system
-    public function ban(array &$array, ?string $admin = null, ?string $key = '', $permanent = false): string
-    {
-        if (! isset($array['ckey'])) return "You must specify a ckey to ban.";
-        if (! is_numeric($array['ckey']) && ! is_string($array['ckey'])) return "The ckey must be a Byond username or Discord ID.";
-        if (! isset($array['duration'])) return "You must specify a duration to ban for.";
-        if ($array['duration'] == '999 years') $permanent = true;
-        if (! isset($array['reason'])) return "You must specify a reason for the ban.";
-        $array['ckey'] = $this->sanitizeInput($array['ckey']);
-        if (is_numeric($array['ckey'])) {
-            if (! $item = $this->verified->get('discord', $array['ckey'])) return "Unable to find a ckey for <@{$array['ckey']}>. Please use the ckey instead of the Discord ID.";
-            $array['ckey'] = $item['ss13'];
-        }
-        if (! $this->shard)
-            if ($member = $this->getVerifiedMember($array['ckey']))
-                if (! $member->roles->has($this->role_ids['banished'])) {
-                    if (! $permanent) $member->addRole($this->role_ids['banished'], "Banned for {$array['duration']} with the reason {$array['reason']}");
-                    else $member->setRoles([$this->role_ids['banished'], $this->role_ids['permabanished']], "Banned for {$array['duration']} with the reason {$array['reason']}");
-                }
-        if ($this->legacy) return $this->legacyBan($array, $admin, $key, $permanent);
-        return $this->sqlBan($array, $admin, $key, $permanent);
-    }
-    */
-    /* TODO: Reimplement this without the external game system
-    public function unban(string $ckey, ?string $admin = null, ?string $key = ''): void
-    {
-        $admin ??= $this->discord->user->displayname;
-        if ($this->legacy) $this->legacyUnban($ckey, $admin, $key);
-        else $this->sqlUnban($ckey, $admin, $key);
-        if (! $this->shard)
-            if ($member = $this->getVerifiedMember($ckey))
-                if ($member->roles->has($this->role_ids['banished']))
-                    $member->removeRole($this->role_ids['banished'], "Unbanned by $admin");
-    }
-    */
-    
-    /* TODO: Reimplement this without the external game system
-    public function DirectMessage(string $recipient, string $message, string $sender, ?string $server = ''): bool
-    {
-        $directmessage = function (string $recipient, string $message, string $sender, string $server): bool
-        {
-            $server = strtolower($server);
-            if (file_exists($this->files[$server.'_discord2dm']) && $file = @fopen($this->files[$server.'_discord2dm'], 'a')) {
-                fwrite($file, "$sender:::$recipient:::$message" . PHP_EOL);
-                fclose($file);
-                return true;
-            } else {
-                $this->logger->debug("unable to open `{$this->files[$server.'_discord2dm']}`");
-                return false;
-            }
-        };
-        
-        $sent = false;
-        if ($server) $sent = $directmessage($recipient, $message, $sender, $server);
-        else foreach ($this->server_settings as $key => $settings) {
-            $server = strtolower($key);
-            if (! isset($settings['enabled']) || ! $settings['enabled']) continue;
-            if ($directmessage($recipient, $message, $sender, $key)) $sent = true;
-        }
-        return $sent;
-    }
-    */
     /*
      * This function is used to get the country code of an IP address using the ip-api API
      * The site will return a JSON object with the country code, region, and city of the IP address
@@ -1279,6 +1159,7 @@ class ModuBot
     }
     /**
      * Returns the country code for a given IP address.
+     * IMPORTANT: This data used for this function is not maintained and should not be used for anything other than a rough estimate of a user's location.
      *
      * @param string $ip The IP address to look up.
      * @return string The two-letter country code for the IP address, or 'unknown' if the country cannot be determined.
@@ -1307,9 +1188,9 @@ class ModuBot
      */
     public function joinRoles(Member $member): ?PromiseInterface
     {
-        if ($member->guild_id !== $this->primary_guild_id) return null;
+        if (! array_key_exists($member->guild_id, $this->guilds)) return null;
 
-        /* TODO: Reimplement this without the verification system
+        /* TODO: Reimplement this with a new verification system
         if (($item['ss13'] && isset($this->softbanned[$item['ss13']])) || isset($this->softbanned[$member->id])) return null;
         $banned = $this->bancheck($item['ss13'], true);
         $paroled = isset($this->paroled[$item['ss13']]);
@@ -1319,8 +1200,9 @@ class ModuBot
         return $member->setroles([$this->role_ids['infantry']], "verified join {$item['ss13']}");
         */
 
-        if (isset($this->welcome_message, $this->channel_ids['welcome']) && $this->welcome_message && $member->guild_id == $this->primary_guild_id)
-            if ($channel = $this->discord->getChannel($this->channel_ids['welcome']))
+        reset($this->guilds);
+        if (isset($this->welcome_message, $this->guilds[$member->guild_id]['channel_ids']['welcome']) && $this->welcome_message && $member->guild_id == key($this->guilds))
+            if ($channel = $this->discord->getChannel($this->guilds[$member->guild_id]['channel_ids']['welcome']))
                 return $this->sendMessage($channel, "<@{$member->id}>, " . $this->welcome_message);
         return null;
     }
@@ -1367,7 +1249,7 @@ class ModuBot
             return $this->ban($arr);
         }
         $warning = "You are currently violating a server rule. Further violations will result in an automatic ban that will need to be appealed on our Discord. Review the rules at {$this->rules}. Reason: {$badwords_array['reason']} ({$badwords_array['category']} => $filtered)";
-        if (isset($this->channel_ids['staff_bot']) && $channel = $this->discord->getChannel($this->channel_ids['staff_bot'])) $this->sendMessage($channel, "`$ckey` is" . substr($warning, 7));
+        if (isset($this->guilds[$member->guild_id]['staff_bot']) && $channel = $this->discord->getChannel($this->guilds[$member->guild_id]['staff_bot'])) $this->sendMessage($channel, "`$ckey` is" . substr($warning, 7));
         return $this->DirectMessage('AUTOMOD', $warning, $ckey, $server);
     }
     */
@@ -1391,9 +1273,10 @@ class ModuBot
      */
     public function hasRequiredConfigRoles(array $required_roles = []): bool
     {
-        if (! $guild = $this->discord->guilds->get('id', $this->primary_guild_id)) { $this->logger->error("Primary Guild `{$this->primary_guild_id}` is missing!"); return false; }
-        if ($diff = array_diff($required_roles, array_keys($this->role_ids))) { $this->logger->error('Required roles are missing from the `role_ids` config', $diff); return false; }
-        foreach ($required_roles as $role) if (!isset($this->role_ids[$role]) || ! $guild->roles->get('id', $this->role_ids[$role])) { $this->logger->error("Role with ID `$role` is missing from the Primary Guild"); return false; }
+        reset($this->guilds);
+        if (! $guild = $this->discord->guilds->get('id', $guild_key = key($this->guilds))) { $this->logger->error('Primary Guild `' . $guild_key . '` is missing!'); return false; }
+        if ($diff = array_diff($required_roles, array_keys($this->guilds[$guild_key]['roles']))) { $this->logger->error('Required roles are missing from the `role_ids` config', $diff); return false; }
+        foreach ($required_roles as $role) if (!isset($this->guilds[$guild_key]['roles'][$role]) || ! $guild->roles->get('id', $this->guilds[$guild_key]['roles'][$role])) { $this->logger->error("Role with ID `$role` is missing from the Primary Guild"); return false; }
         return true;
     }
     
@@ -1442,7 +1325,7 @@ class ModuBot
             $file_contents = '';
             /* TODO: Reimplement this without the verified ckey system
             foreach ($this->verified as $item) {
-                if (!$member = $this->getVerifiedMember($item)) continue;
+                if (! $member = $this->getVerifiedMember($item)) continue;
                 $file_contents .= $callback($member, $item, $required_roles);
             }
             */

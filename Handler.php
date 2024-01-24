@@ -38,7 +38,7 @@ interface HandlerInterface
     public function getIterator(): Traversable;
     public function __debugInfo(): array;
 
-    public function checkRank(?Collection $roles = null, array $allowed_ranks = []): bool;
+    public function checkRank(?Member $member, array $allowed_ranks = []): bool;
 }
 
 namespace ModuBot;
@@ -212,12 +212,28 @@ class Handler implements HandlerInterface
         return ['handlers' => array_keys($this->handlers)];
     }
 
-    public function checkRank(?Collection $roles = null, array $allowed_ranks = []): bool
+    public function checkRank(?Member $member, array $allowed_ranks = []): bool
     {
         if (empty($allowed_ranks)) return true;
+        if (! $member) return false;
         $resolved_ranks = [];
-        foreach ($allowed_ranks as $rank) if (isset($this->modubot->role_ids[$rank])) $resolved_ranks[] = $this->modubot->role_ids[$rank];
-        foreach ($roles as $role) if (in_array($role->id, $resolved_ranks)) return true;
+        if (! isset($this->modubot->guilds[$member->guild_id])) {
+            $this->modubot->logger->warning("Guild `{$member->guild_id}` not configuration in guilds");
+            return false;
+        }
+        if (! isset($this->modubot->guilds[$member->guild_id]['roles'])) {
+            $this->modubot->logger->warning("Guild `{$member->guild_id}` does not have roles configured");
+            return false;
+        }
+        foreach ($allowed_ranks as $rank) {
+            if (! isset($this->modubot->guilds[$member->guild_id]['roles'][$rank])) {
+                $this->modubot->logger->warning("Guild `{$member->guild_id}` does not have role `{$rank}` configured");
+                continue;
+            }
+            $resolved_ranks[] = $this->modubot->guilds[$member->guild_id]['roles'][$rank];
+        }
+        if (! empty(array_intersect($resolved_ranks, array_map('strval', array_keys($member->roles->toArray()))))) return true;
+        //else $this->modubot->logger->debug("Member `{$member->id}` does not have any of the required roles: " . implode(', ', $allowed_ranks));
         return false;
     }
 }

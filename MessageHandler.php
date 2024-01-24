@@ -26,6 +26,8 @@ namespace ModuBot;
 use ModuBot\Interfaces\MessageHandlerInterface;
 use ModuBot\Interfaces\MessageHandlerCallbackInterface;
 use Discord\Parts\Channel\Message;
+use Discord\Parts\Guild\Guild;
+use Discord\Parts\User\Member;
 use Discord\Helpers\Collection;
 use React\Promise\PromiseInterface;
 
@@ -49,9 +51,10 @@ class MessageHandlerCallback implements MessageHandlerCallbackInterface
                 throw new \InvalidArgumentException("Parameter $index must have a type hint.");
             }
 
-            $type = $parameter->getType()->getName();
+            $type = $parameter->getType();
+            $name = $type instanceof \ReflectionNamedType ? $type->getName() : null;
 
-            if ($type !== $expectedParameterTypes[$index]) {
+            if ($name !== $expectedParameterTypes[$index]) {
                 throw new \InvalidArgumentException("Parameter $index must be of type {$expectedParameterTypes[$index]}.");
             }
         }
@@ -306,10 +309,10 @@ class MessageHandler extends Handler implements MessageHandlerInterface
             if ($callback = $method_func()) { // Command triggered
                 $required_permissions = $this->required_permissions[$command] ?? [];
                 if ($lowest_rank = array_pop($required_permissions)) {
-                    if (! isset($this->modubot->role_ids[$lowest_rank])) {
+                    if (! isset(reset($this->modubot->guilds)['roles'][$lowest_rank])) {
                         $this->modubot->logger->warning("Unable to find role ID for rank `$lowest_rank`");
                         throw new \Exception("Unable to find role ID for rank `$lowest_rank`");
-                    } elseif (! $this->checkRank($message->member->roles, $this->required_permissions[$command] ?? [])) return $this->modubot->reply($message, 'Rejected! You need to have at least the <@&' . $this->modubot->role_ids[$lowest_rank] . '> rank.');
+                    } elseif (! $this->checkRank($message->member, $this->required_permissions[$command] ?? [])) return $this->modubot->reply($message, 'Rejected! You need to have at least the <@&' . reset($this->modubot->guilds)['roles'][$lowest_rank] . '> rank.');
                 }
                 return $callback($message, $message_filtered, $command);
             }
@@ -319,22 +322,39 @@ class MessageHandler extends Handler implements MessageHandlerInterface
     }
 
     // Don't forget to use ->setAllowedMentions(['parse'=>[]]) on the MessageBuilder object to prevent all roles being pinged
-    public function generateHelp(?Collection $roles = null): string
-    {
-        $ranks = array_keys($this->modubot->role_ids);
+    public function generateHelp(?Member $member = null, $complete = false): string
+    { // TODO: Review this method for junk code
+        $guild_id = $member ? $member->guild_id : key($this->modubot->guilds);
+        if (! $complete && ! $guild = $this->modubot->discord->guilds->get('id', $guild_id)) return "Unable to get guild information for guild `$guild_id`";
+        if ($guild_id && isset($this->modubot->guilds[$guild_id], $this->modubot->guilds[$guild_id]['roles'])) $ranks = $this->modubot->guilds[$guild_id]['roles'];
+        else $ranks = array_keys(reset($this->modubot->guilds)['roles']); // Default to first guild
         $ranks[] = 'everyone';
-        
+        //var_dump($ranks);
+
         $array = [];
         foreach (array_keys($this->handlers) as $command) {
+            //var_dump($command);
             $required_permissions = $this->required_permissions[$command] ?? [];
             $lowest_rank = array_pop($required_permissions) ?? 'everyone';
-            if (! $roles) $array[$lowest_rank][] = $command;
-            elseif ($lowest_rank == 'everyone' || $this->checkRank($roles, $this->required_permissions[$command])) $array[$lowest_rank][] = $command;
+            $role = null;
+            if (! is_numeric($lowest_rank) && $lowest_rank !== 'everyone')
+                if ($complete || (! $member || $role = $guild->roles->get('name', $lowest_rank)))
+                    $lowest_rank = $role ? $role->id : $lowest_rank;
+            if ($complete || ! $member) $array[$lowest_rank][] = $command;
+            elseif ($lowest_rank == 'everyone') {
+                //$this->modubot->logger->debug("Lowest rank for `$command` is everyone");
+                $array[$lowest_rank][] = $command;
+            }
+            elseif ($this->checkRank($member, $this->required_permissions[$command])) {
+                //$this->modubot->logger->debug("Member `{$member->id}` has at least the required rank for `$command`");
+                $array[$lowest_rank][] = $command;
+            }
+            //else $this->modubot->logger->debug("Member `{$member->id}` does not have any of the required roles: " . implode(', ', $required_permissions));
         }
         $string = '';
-        foreach ($ranks as $rank) {
-            if (! isset($array[$rank]) || ! $array[$rank]) continue;
-            if (is_numeric($rank)) $string .= '<@&' . $this->modubot->role_ids[$rank] . '>: `';
+        $array = array_reverse($array, true); // Sort by highest rank first
+        foreach (array_keys($array) as $rank) {
+            if (is_numeric($rank)) $string .= '<@&' . $rank . '>: `';
             else $string .= '@' . $rank . ': `'; // everyone
             asort($array[$rank]);
             $string .= implode('`, `', $array[$rank]);

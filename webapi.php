@@ -366,44 +366,44 @@ $webapi = new HttpServer($loop, function (ServerRequestInterface $request) use (
             break;
         
         case 'channel':
-            if (! $id || !$webapiSnow($id) || ! $return = $modubot->discord->getChannel($id)) return $webapiFail('channel_id', $id);
+            if (! $id || ! $webapiSnow($id) || ! $return = $modubot->discord->getChannel($id)) return $webapiFail('channel_id', $id);
             break;
 
         case 'guild':
-            if (! $id || !$webapiSnow($id) || ! $return = $modubot->discord->guilds->get('id', $id)) return $webapiFail('guild_id', $id);
+            if (! $id || ! $webapiSnow($id) || ! $return = $modubot->discord->guilds->get('id', $id)) return $webapiFail('guild_id', $id);
             break;
 
         case 'bans':
-            if (! $id || !$webapiSnow($id) || ! $return = $modubot->discord->guilds->get('id', $id)->bans) return $webapiFail('guild_id', $id);
+            if (! $id || ! $webapiSnow($id) || ! $return = $modubot->discord->guilds->get('id', $id)->bans) return $webapiFail('guild_id', $id);
             break;
 
         case 'channels':
-            if (! $id || !$webapiSnow($id) || ! $return = $modubot->discord->guilds->get('id', $id)->channels) return $webapiFail('guild_id', $id);
+            if (! $id || ! $webapiSnow($id) || ! $return = $modubot->discord->guilds->get('id', $id)->channels) return $webapiFail('guild_id', $id);
             break;
 
         case 'members':
-            if (! $id || !$webapiSnow($id) || ! $return = $modubot->discord->guilds->get('id', $id)->members) return $webapiFail('guild_id', $id);
+            if (! $id || ! $webapiSnow($id) || ! $return = $modubot->discord->guilds->get('id', $id)->members) return $webapiFail('guild_id', $id);
             break;
 
         case 'emojis':
-            if (! $id || !$webapiSnow($id) || ! $return = $modubot->discord->guilds->get('id', $id)->emojis) return $webapiFail('guild_id', $id);
+            if (! $id || ! $webapiSnow($id) || ! $return = $modubot->discord->guilds->get('id', $id)->emojis) return $webapiFail('guild_id', $id);
             break;
 
         case 'invites':
-            if (! $id || !$webapiSnow($id) || ! $return = $modubot->discord->guilds->get('id', $id)->invites) return $webapiFail('guild_id', $id);
+            if (! $id || ! $webapiSnow($id) || ! $return = $modubot->discord->guilds->get('id', $id)->invites) return $webapiFail('guild_id', $id);
             break;
 
         case 'roles':
-            if (! $id || !$webapiSnow($id) || ! $return = $modubot->discord->guilds->get('id', $id)->roles) return $webapiFail('guild_id', $id);
+            if (! $id || ! $webapiSnow($id) || ! $return = $modubot->discord->guilds->get('id', $id)->roles) return $webapiFail('guild_id', $id);
             break;
 
         case 'guildMember':
-            if (! $id || !$webapiSnow($id) || ! $guild = $modubot->discord->guilds->get('id', $id)) return $webapiFail('guild_id', $id);
-            if (! $id2 || !$webapiSnow($id2) || ! $return = $guild->members->get('id', $id2)) return $webapiFail('user_id', $id2);
+            if (! $id || ! $webapiSnow($id) || ! $guild = $modubot->discord->guilds->get('id', $id)) return $webapiFail('guild_id', $id);
+            if (! $id2 || ! $webapiSnow($id2) || ! $return = $guild->members->get('id', $id2)) return $webapiFail('user_id', $id2);
             break;
 
         case 'userId':
-            if (! $id || !$webapiSnow($id) || ! $return = $modubot->discord->users->get('id', $id)) return $webapiFail('user_id', $id);
+            if (! $id || ! $webapiSnow($id) || ! $return = $modubot->discord->users->get('id', $id)) return $webapiFail('user_id', $id);
             break;
 
         case 'userName':
@@ -463,7 +463,7 @@ $webapi = new HttpServer($loop, function (ServerRequestInterface $request) use (
                 $modubot->logger->alert('API REJECT ' . $request->getServerParams()['REMOTE_ADDR']);
                 return new Response(501, ['Content-Type' => 'text/plain'], 'Reject');
             }
-            if (! $id || !$webapiSnow($id) || ! $return = $modubot->discord->users->get('id', $id)) return $webapiFail('user_id', $id);
+            if (! $id || ! $webapiSnow($id) || ! $return = $modubot->discord->users->get('id', $id)) return $webapiFail('user_id', $id);
             break;
 
         case 'owner':
@@ -471,7 +471,7 @@ $webapi = new HttpServer($loop, function (ServerRequestInterface $request) use (
                 $modubot->logger->alert('API REJECT ' . $request->getServerParams()['REMOTE_ADDR']);
                 return new Response(501, ['Content-Type' => 'text/plain'], 'Reject');
             }
-            if (! $id || !$webapiSnow($id)) return $webapiFail('user_id', $id); $return = false;
+            if (! $id || ! $webapiSnow($id)) return $webapiFail('user_id', $id); $return = false;
             if ($user = $modubot->discord->users->get('id', $id)) { // Search all guilds the bot is in and check if the user id exists as a guild owner
                 foreach ($modubot->discord->guilds as $guild) {
                     if ($id == $guild->owner_id) {
@@ -483,7 +483,7 @@ $webapi = new HttpServer($loop, function (ServerRequestInterface $request) use (
             break;
 
         case 'avatar':
-            if (! $id || !$webapiSnow($id)) return $webapiFail('user_id', $id);
+            if (! $id || ! $webapiSnow($id)) return $webapiFail('user_id', $id);
             if (! $user = $modubot->discord->users->get('id', $id)) $return = 'https://cdn.discordapp.com/embed/avatars/'.rand(0,4).'.png'; // Default avatar if user wasn't found
             else $return = $user->avatar;
             // if (! $return) return new Response(($id ? 404 : 400), ['Content-Type' => 'text/plain'], (''));
@@ -493,7 +493,6 @@ $webapi = new HttpServer($loop, function (ServerRequestInterface $request) use (
             $server =& $method; // alias for readability
             if (! isset($modubot->channel_ids[$server]) || ! $channel_id = $modubot->channel_ids[$server]) return new Response(400, ['Content-Type' => 'text/plain'], 'Webhook Channel Not Defined');
             $params = $request->getQueryParams();
-            // var_dump($params);
             if (! $whitelisted && (! isset($params['key']) || $params['key'] != $webhook_key)) return new Response(401, ['Content-Type' => 'text/plain'], 'Unauthorized');
             if (! isset($params['method']) || ! isset($params['data'])) return new Response(400, ['Content-Type' => 'text/plain'], 'Missing Parameters');
             $data = json_decode($params['data'], true);
@@ -527,7 +526,7 @@ $webapi = new HttpServer($loop, function (ServerRequestInterface $request) use (
     }
     // Server-specific
     foreach ($modubot->server_settings as $key => $settings) {
-        if (!isset($settings['enabled']) || !$settings['enabled']) continue;
+        if (!isset($settings['enabled']) || ! $settings['enabled']) continue;
         $server = strtolower($key);
         if ($sub == $key)
             switch ($id) {
