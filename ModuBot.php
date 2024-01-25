@@ -1288,21 +1288,21 @@ class ModuBot
      * @param array $lists Additional file paths to search for
      * @return array|false An array of file paths or false if no files were found
      */
-    public function getRequiredConfigFiles(string $postfix = '', bool $defaults = true, array $lists = []): array|false
+    public function getRequiredConfigFiles(array $lists = [], string $postfix = '', bool $use_defaults = true): array|false
     {
-        $l = [];
-        if ($defaults) {
+        $array = [];
+        if ($use_defaults) {
             $defaultLists = [];
-            foreach ($defaultLists as $file_path) if (isset($this->files[$file_path]) && ! in_array($file_path, $l)) array_unshift($l, $file_path);
+            foreach ($defaultLists as $file_path) if (isset($this->files[$file_path]) && ! in_array($file_path, $array)) array_unshift($array, $file_path);
             else $this->logger->warning("Default `$postfix` file `$file_path` was either missing from the `files` config or already included in the list");
             //if (empty($l)) $this->logger->debug("No default `$postfix` files were found in the `files` config");
         }
-        if ($lists) foreach ($lists as $file_path) if (isset($this->files[$file_path]) && ! in_array($file_path, $l)) array_unshift($l, $file_path);
-        if (empty($l)) {
+        if ($lists) foreach ($lists as $file_path) if (isset($this->files[$file_path]) && ! in_array($file_path, $array)) array_unshift($array, $file_path);
+        if (empty($array)) {
             $this->logger->warning("No `$postfix` files were found");
             return false;
         }
-        return $l;
+        return $array;
     }
 
     /**
@@ -1342,11 +1342,11 @@ class ModuBot
      * @param string $postfix The postfix to use for the file names.
      * @return bool Returns true if the update was successful, false otherwise.
      */
-    public function adminlistUpdate(array $lists = [], bool $defaults = true, string $postfix = '_admins'): bool
+    public function adminlistUpdate(array $lists = [], string $postfix = '_admins', bool $use_defaults = true): bool
     {
         $required_roles = []; // Priority is from top to bottom
         if (! $this->hasRequiredConfigRoles(array_keys($required_roles))) return false;
-        if (! $file_paths = $this->getRequiredConfigFiles($postfix, $defaults, $lists)) return false;
+        if (! $file_paths = $this->getRequiredConfigFiles($lists, $postfix, $use_defaults)) return false;
 
         /* TODO: Reimplement this?
         $callback = function (Member $member, array $item, array $required_roles): string
