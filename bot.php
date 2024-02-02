@@ -165,7 +165,7 @@ $options = array(
         'GUILD_MEMBER_ADD' => [
             // 
         ],
-        'misc' => [ // Custom functions
+        'misc' => [ // Custom functions without an event trigger
             //
         ],
     ),

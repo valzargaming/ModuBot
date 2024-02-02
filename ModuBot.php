@@ -16,12 +16,15 @@ use Discord\Helpers\Collection;
 //use Discord\Parts\Channel\Channel;
 use Discord\Parts\Channel\Message;
 use Discord\Parts\Embed\Embed;
+use Discord\Parts\Guild\Ban;
 use Discord\Parts\Guild\Guild;
 use Discord\Parts\Guild\Role;
 use Discord\Parts\User\Activity;
 use Discord\Parts\User\Member;
-//use Discord\Parts\User\User;
+use Discord\Parts\User\User;
+use Discord\Parts\WebSockets\MessageReaction;
 use Discord\Repository\Interaction\GlobalCommandRepository;
+use Discord\WebSockets\Event;
 use Monolog\Logger;
 use Monolog\Level;
 use Monolog\Formatter\LineFormatter;
@@ -255,16 +258,64 @@ class ModuBot
                         else $this->logger->debug('No message variable functions found!');
                     }
                 });
-                $this->discord->on('GUILD_MEMBER_ADD', function (Member $guildmember): void
+                $this->discord->on(Event::MESSAGE_REACTION_ADD, function (MessageReaction $reaction)
+                {
+                    //
+                });
+                $this->discord->on(Event::MESSAGE_REACTION_REMOVE, function (MessageReaction $reaction)
+                {
+                    //
+                });
+                $this->discord->on(Event::MESSAGE_UPDATE, function (Message $message, Discord $discord, Message $message_old)
+                {
+                    //
+                });
+                $this->discord->on(Event::MESSAGE_DELETE, function (Message $message)
+                {
+                    //
+                });
+                $this->discord->on(Event::MESSAGE_DELETE_BULK, function (Message $message)
+                {
+                    //
+                });
+                $this->discord->on(Event::GUILD_CREATE, function (Guild $guild): void
+                {
+                    if (!isset($this->discord_config[$guild->id])) $this->SetConfigTemplate($guild, $this->discord_config);
+                });
+                $this->discord->on(Event::GUILD_DELETE, function (Guild $guild): void
+                {
+                    //
+                });
+                $this->discord->on(Event::GUILD_UPDATE, function (Guild $guild): void
+                {
+                    //
+                });
+                $this->discord->on(Event::GUILD_MEMBER_ADD, function (Member $guildmember)
                 {
                     if ($this->shard) return;                    
                     $this->joinRoles($guildmember);
                     foreach ($this->functions['GUILD_MEMBER_ADD'] as $func) $func($this, $guildmember);
-                    if (empty($this->functions['GUILD_MEMBER_ADD'])) $this->logger->debug('No message functions found!');
+                    if (empty($this->functions['GUILD_MEMBER_ADD'])) $this->logger->debug('No GUILD_MEMBER_ADD functions found!');
                 });
-                $this->discord->on('GUILD_CREATE', function (Guild $guild): void
+                $this->discord->on(Event::GUILD_MEMBER_REMOVE, function (Member $guildmember)
                 {
-                    if (!isset($this->discord_config[$guild->id])) $this->SetConfigTemplate($guild, $this->discord_config);
+                    //
+                });
+                $this->discord->on(Event::GUILD_MEMBER_UPDATE, function (Member $guildmember, Discord $discord, ?Member $member_old)
+                {
+                    //
+                });
+                $this->discord->on(Event::GUILD_BAN_ADD, function (Ban $guildmember, Discord $discord, ?Member $member_old)
+                {
+                    //
+                });
+                $this->discord->on(Event::GUILD_BAN_REMOVE, function (Ban $guildmember, Discord $discord, ?Member $member_old)
+                {
+                    //
+                });
+                $this->discord->on(Event::USER_UPDATE, function (User $user, ?User $user_old)
+                {
+                    //
                 });
             });
 
@@ -473,7 +524,7 @@ class ModuBot
          * If the server is not valid, it returns a message with valid server options.
          */
         $log_handler = function (Message $message, string $message_content): PromiseInterface
-        {
+        { // TODO: Change the path to the log directory instead of using deprecated server_settings
             $tokens = explode(';', $message_content);
             $keys = [];
             foreach ($this->server_settings as $key => $settings) {
@@ -510,8 +561,7 @@ class ModuBot
         $this->messageHandler->offsetSet('stop', new MessageHandlerCallback(function (Message $message, array $message_filtered, string $command)//: PromiseInterface
         {
             $promise = $message->react("🛑");
-            $promise->done(function () { $this->stop(); });
-            //return $promise; // Pending PromiseInterfaces v3
+            $promise->then(function () { $this->stop(); });
             return $promise;
         }), ['Developer', 'Administrator']);
 
